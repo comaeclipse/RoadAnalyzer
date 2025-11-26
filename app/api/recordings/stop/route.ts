@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
 
     // Calculate speed statistics
     const speeds = gpsData
-      .map((s) => s.speed)
+      .map((s: { speed: number | null }) => s.speed)
       .filter((s): s is number => s !== null && s !== undefined);
 
     const maxSpeed = speeds.length > 0 ? Math.max(...speeds) : null;
