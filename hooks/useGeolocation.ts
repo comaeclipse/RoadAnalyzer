@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { GPSData } from '@/types/sensors';
-import { truncateHistory } from '@/lib/sensor-utils';
+import { truncateHistory, calculateDistance, calculateBearing, calculateSpeed } from '@/lib/sensor-utils';
+import { SENSOR_CONFIG } from '@/lib/constants';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [1000, 2000, 4000]; // Exponential backoff
@@ -14,6 +15,7 @@ export function useGeolocation(enabled: boolean) {
   const watchIdRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const previousPositionRef = useRef<{ lat: number; lon: number; timestamp: number } | null>(null);
 
   const clearRetryTimeout = useCallback(() => {
     if (retryTimeoutRef.current) {
@@ -38,16 +40,63 @@ export function useGeolocation(enabled: boolean) {
       (position) => {
         // Success - reset retry count
         retryCountRef.current = 0;
-        
+
+        let calculatedSpeed: number | null = position.coords.speed;
+        let calculatedHeading: number | null = position.coords.heading;
+
+        // If native speed/heading not available, calculate from previous position
+        if (previousPositionRef.current &&
+            (position.coords.speed === null || position.coords.heading === null)) {
+
+          const prev = previousPositionRef.current;
+          const timeDelta = Date.now() - prev.timestamp;
+
+          // Only calculate if enough time has passed
+          if (timeDelta >= SENSOR_CONFIG.GPS_MIN_TIME_FOR_CALCULATION) {
+            const distance = calculateDistance(
+              prev.lat,
+              prev.lon,
+              position.coords.latitude,
+              position.coords.longitude
+            );
+
+            // Only calculate speed/heading if moved enough (reduces GPS jitter)
+            if (distance >= SENSOR_CONFIG.GPS_MIN_DISTANCE_FOR_HEADING) {
+              if (position.coords.speed === null) {
+                calculatedSpeed = calculateSpeed(distance, timeDelta);
+              }
+
+              if (position.coords.heading === null) {
+                calculatedHeading = calculateBearing(
+                  prev.lat,
+                  prev.lon,
+                  position.coords.latitude,
+                  position.coords.longitude
+                );
+              }
+            }
+          }
+        }
+
         const newData: GPSData = {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
           altitude: position.coords.altitude,
-          speed: position.coords.speed,
-          heading: position.coords.heading,
+          speed: calculatedSpeed,
+          heading: calculatedHeading,
           accuracy: position.coords.accuracy,
           timestamp: Date.now(),
         };
+
+        // Update previous position for next calculation
+        // Only update if accuracy is good to avoid bad reference points
+        if (position.coords.accuracy < SENSOR_CONFIG.GPS_MAX_ACCURACY_FOR_REFERENCE) {
+          previousPositionRef.current = {
+            lat: position.coords.latitude,
+            lon: position.coords.longitude,
+            timestamp: Date.now(),
+          };
+        }
 
         setData(newData);
         setHistory((prev) => truncateHistory([...prev, newData]));
@@ -120,6 +169,7 @@ export function useGeolocation(enabled: boolean) {
     setHistory([]);
     setError(null);
     retryCountRef.current = 0;
+    previousPositionRef.current = null;
     clearRetryTimeout();
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);

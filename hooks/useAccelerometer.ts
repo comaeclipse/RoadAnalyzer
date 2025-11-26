@@ -12,7 +12,7 @@ export function useAccelerometer(enabled: boolean) {
 
   const handleMotionEvent = useCallback(
     throttle((event: DeviceMotionEvent) => {
-      const acceleration = event.accelerationIncludingGravity;
+      const acceleration = event.acceleration || event.accelerationIncludingGravity;
 
       if (acceleration && acceleration.x !== null && acceleration.y !== null && acceleration.z !== null) {
         const newData: AccelerometerData = {
