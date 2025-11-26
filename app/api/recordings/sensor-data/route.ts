@@ -62,7 +62,9 @@ export async function POST(request: NextRequest) {
           where: { id: driveId },
           data: { sampleCount: { increment: data.length } },
         })
-        .catch((err) => console.error('Failed to update sample count:', err));
+        .catch((err: unknown) =>
+          console.error('Failed to update sample count:', err)
+        );
 
       return NextResponse.json({
         success: true,
@@ -121,7 +123,9 @@ export async function POST(request: NextRequest) {
           where: { id: driveId },
           data: { sampleCount: { increment: data.length } },
         })
-        .catch((err) => console.error('Failed to update sample count:', err));
+        .catch((err: unknown) =>
+          console.error('Failed to update sample count:', err)
+        );
 
       return NextResponse.json({
         success: true,
