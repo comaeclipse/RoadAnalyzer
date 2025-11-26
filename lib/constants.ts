@@ -1,0 +1,6 @@
+export const SENSOR_CONFIG = {
+  ACCELEROMETER_INTERVAL: 100, // 10 Hz
+  GPS_INTERVAL: 1000,           // 1 Hz
+  MAX_HISTORY_LENGTH: 50,
+  DEFAULT_MAP_ZOOM: 15,
+} as const;
