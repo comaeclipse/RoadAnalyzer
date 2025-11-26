@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { NumericDisplay } from './NumericDisplay';
 import { ChartDisplay } from './ChartDisplay';
 import { MapWrapper } from './MapWrapper';
+import { RecordingControls } from '@/components/recordings/RecordingControls';
 import { Activity, Smartphone, MapPin } from 'lucide-react';
 
 export function SensorDashboard() {
@@ -41,6 +42,9 @@ export function SensorDashboard() {
             </Badge>
           </div>
         </div>
+
+        {/* Recording Controls */}
+        <RecordingControls />
 
         {/* Tabs for different visualizations */}
         <Tabs defaultValue="numeric" className="w-full">

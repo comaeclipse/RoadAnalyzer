@@ -1,0 +1,85 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Drive {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Session metadata
+  startTime   DateTime
+  endTime     DateTime?
+  status      DriveStatus @default(RECORDING)
+
+  // User-defined metadata
+  name        String?
+  description String?
+  tags        String[]
+
+  // Calculated statistics (updated on endDrive)
+  duration    Int?      // milliseconds
+  distance    Float?    // meters
+  maxSpeed    Float?    // m/s
+  avgSpeed    Float?    // m/s
+  sampleCount Int       @default(0)
+
+  // Relations
+  accelerometerData AccelerometerSample[]
+  gpsData           GpsSample[]
+
+  @@index([createdAt(sort: Desc)])
+  @@index([status])
+}
+
+enum DriveStatus {
+  RECORDING
+  COMPLETED
+  FAILED
+}
+
+model AccelerometerSample {
+  id        String   @id @default(cuid())
+  driveId   String
+  drive     Drive    @relation(fields: [driveId], references: [id], onDelete: Cascade)
+
+  // Raw sensor data
+  x         Float
+  y         Float
+  z         Float
+  timestamp BigInt   // Milliseconds since epoch
+
+  // Calculated (denormalized for query performance)
+  magnitude Float    // sqrt(x^2 + y^2 + z^2)
+
+  @@index([driveId, timestamp])
+  @@index([timestamp])
+}
+
+model GpsSample {
+  id        String   @id @default(cuid())
+  driveId   String
+  drive     Drive    @relation(fields: [driveId], references: [id], onDelete: Cascade)
+
+  // GPS data
+  latitude  Float
+  longitude Float
+  altitude  Float?
+  speed     Float?   // m/s
+  heading   Float?   // degrees (0-360)
+  accuracy  Float    // meters
+  timestamp BigInt   // Milliseconds since epoch
+
+  // Calculated (denormalized)
+  distanceFromPrev Float?  // meters from previous point
+
+  @@index([driveId, timestamp])
+  @@index([timestamp])
+}
