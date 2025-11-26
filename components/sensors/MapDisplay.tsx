@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useRef, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet';
 import { useSensorContext } from '@/components/providers/SensorProvider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,13 +17,45 @@ const icon = L.icon({
   iconAnchor: [12, 41],
 });
 
-// Component to auto-center map on current position
+// Component to auto-center map on current position with throttling
 function MapController({ center }: { center: [number, number] }) {
   const map = useMap();
+  const lastPanTimeRef = useRef<number>(0);
+  const pendingPanRef = useRef<NodeJS.Timeout | null>(null);
+
+  const panToCenter = useCallback((newCenter: [number, number]) => {
+    map.setView(newCenter, map.getZoom(), { animate: true, duration: 0.3 });
+    lastPanTimeRef.current = Date.now();
+  }, [map]);
 
   useEffect(() => {
-    map.setView(center, map.getZoom());
-  }, [center, map]);
+    const now = Date.now();
+    const timeSinceLastPan = now - lastPanTimeRef.current;
+    const throttleDelay = SENSOR_CONFIG.MAP_PAN_THROTTLE;
+
+    // Clear any pending pan
+    if (pendingPanRef.current) {
+      clearTimeout(pendingPanRef.current);
+      pendingPanRef.current = null;
+    }
+
+    if (timeSinceLastPan >= throttleDelay) {
+      // Enough time has passed, pan immediately
+      panToCenter(center);
+    } else {
+      // Schedule pan for later
+      const remainingDelay = throttleDelay - timeSinceLastPan;
+      pendingPanRef.current = setTimeout(() => {
+        panToCenter(center);
+      }, remainingDelay);
+    }
+
+    return () => {
+      if (pendingPanRef.current) {
+        clearTimeout(pendingPanRef.current);
+      }
+    };
+  }, [center, panToCenter]);
 
   return null;
 }

@@ -8,7 +8,12 @@
       "Bash(npm run build:*)",
       "Bash(npm run dev:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: iOS sensor visualization dashboard\n\n- Next.js 14 app with TypeScript and Tailwind CSS\n- Three visualization modes: numeric, charts, and map\n- Real-time accelerometer (x, y, z) readings\n- GPS tracking with coordinates, altitude, speed, heading\n- iOS Safari permission handling for DeviceMotionEvent\n- Recharts for live data visualization\n- Leaflet map with position tracking and path history\n- shadcn/ui components for theming\n- Responsive mobile design\n- Throttled sensor updates (10Hz accel, 1Hz GPS)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git remote add:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []

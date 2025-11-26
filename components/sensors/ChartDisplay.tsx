@@ -1,27 +1,38 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useSensorContext } from '@/components/providers/SensorProvider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
-export const ChartDisplay = React.memo(() => {
+export const ChartDisplay = React.memo(function ChartDisplay() {
   const { accelerometer, gps } = useSensorContext();
 
-  // Format accelerometer data for chart
-  const accelChartData = accelerometer.history.map((reading, index) => ({
-    index,
-    x: Number(reading.x.toFixed(2)),
-    y: Number(reading.y.toFixed(2)),
-    z: Number(reading.z.toFixed(2)),
-  }));
+  // Memoize accelerometer data transformation
+  const accelChartData = useMemo(() => {
+    return accelerometer.history.map((reading, index) => ({
+      index,
+      x: Number(reading.x.toFixed(2)),
+      y: Number(reading.y.toFixed(2)),
+      z: Number(reading.z.toFixed(2)),
+    }));
+  }, [accelerometer.history]);
 
-  // Format GPS data for chart
-  const gpsChartData = gps.history.map((reading, index) => ({
-    index,
-    altitude: reading.altitude !== null ? Number(reading.altitude.toFixed(1)) : null,
-    speed: reading.speed !== null ? Number((reading.speed * 3.6).toFixed(1)) : null,
-  }));
+  // Memoize GPS data transformation
+  const gpsChartData = useMemo(() => {
+    return gps.history.map((reading, index) => ({
+      index,
+      altitude: reading.altitude !== null ? Number(reading.altitude.toFixed(1)) : null,
+      speed: reading.speed !== null ? Number((reading.speed * 3.6).toFixed(1)) : null,
+    }));
+  }, [gps.history]);
+
+  // Memoize tooltip style to prevent recreation on each render
+  const tooltipStyle = useMemo(() => ({
+    backgroundColor: 'hsl(var(--background))',
+    border: '1px solid hsl(var(--border))',
+    borderRadius: '6px'
+  }), []);
 
   return (
     <div className="space-y-6">
@@ -45,13 +56,7 @@ export const ChartDisplay = React.memo(() => {
                   label={{ value: 'm/s²', angle: -90, position: 'insideLeft' }}
                   className="text-xs"
                 />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--background))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '6px'
-                  }}
-                />
+                <Tooltip contentStyle={tooltipStyle} />
                 <Legend />
                 <Line
                   type="monotone"
@@ -60,6 +65,7 @@ export const ChartDisplay = React.memo(() => {
                   dot={false}
                   strokeWidth={2}
                   name="X-Axis"
+                  isAnimationActive={false}
                 />
                 <Line
                   type="monotone"
@@ -68,6 +74,7 @@ export const ChartDisplay = React.memo(() => {
                   dot={false}
                   strokeWidth={2}
                   name="Y-Axis"
+                  isAnimationActive={false}
                 />
                 <Line
                   type="monotone"
@@ -76,6 +83,7 @@ export const ChartDisplay = React.memo(() => {
                   dot={false}
                   strokeWidth={2}
                   name="Z-Axis"
+                  isAnimationActive={false}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -107,13 +115,7 @@ export const ChartDisplay = React.memo(() => {
                   label={{ value: 'Value', angle: -90, position: 'insideLeft' }}
                   className="text-xs"
                 />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--background))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '6px'
-                  }}
-                />
+                <Tooltip contentStyle={tooltipStyle} />
                 <Legend />
                 <Line
                   type="monotone"
@@ -123,6 +125,7 @@ export const ChartDisplay = React.memo(() => {
                   strokeWidth={2}
                   name="Altitude (m)"
                   connectNulls
+                  isAnimationActive={false}
                 />
                 <Line
                   type="monotone"
@@ -132,6 +135,7 @@ export const ChartDisplay = React.memo(() => {
                   strokeWidth={2}
                   name="Speed (km/h)"
                   connectNulls
+                  isAnimationActive={false}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -145,5 +149,3 @@ export const ChartDisplay = React.memo(() => {
     </div>
   );
 });
-
-ChartDisplay.displayName = 'ChartDisplay';

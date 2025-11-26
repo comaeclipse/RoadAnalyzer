@@ -1,12 +1,13 @@
 'use client';
 
+import React from 'react';
 import { useSensorContext } from '@/components/providers/SensorProvider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { calculateMagnitude } from '@/lib/sensor-utils';
 import { format } from 'date-fns';
 
-export function NumericDisplay() {
+export const NumericDisplay = React.memo(function NumericDisplay() {
   const { accelerometer, gps } = useSensorContext();
 
   const formatValue = (value: number | null, precision: number = 2): string => {
@@ -128,4 +129,4 @@ export function NumericDisplay() {
       </Card>
     </div>
   );
-}
+});
