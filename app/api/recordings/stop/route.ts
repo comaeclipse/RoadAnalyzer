@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     // Calculate total distance
     const totalDistance = gpsData.reduce(
-      (sum, sample) => sum + (sample.distanceFromPrev || 0),
+      (sum: number, sample) => sum + (sample.distanceFromPrev ?? 0),
       0
     );
 
