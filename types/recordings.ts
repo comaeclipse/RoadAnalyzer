@@ -1,5 +1,25 @@
-import { Drive, DriveStatus } from '@prisma/client';
 import { AccelerometerData, GPSData } from './sensors';
+
+// Drive status enum
+export type DriveStatus = 'RECORDING' | 'COMPLETED' | 'FAILED';
+
+// Drive type (matches Prisma schema but without Prisma dependency)
+export interface Drive {
+  id: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  startTime: Date | string;
+  endTime: Date | string | null;
+  status: DriveStatus;
+  name: string | null;
+  description: string | null;
+  tags: string[];
+  duration: number | null;
+  distance: number | null;
+  maxSpeed: number | null;
+  avgSpeed: number | null;
+  sampleCount: number;
+}
 
 export interface DriveMetadata {
   name?: string;
@@ -48,5 +68,3 @@ export interface RecordingContextType {
   };
   recordingDuration: number; // in seconds
 }
-
-export type { Drive, DriveStatus };

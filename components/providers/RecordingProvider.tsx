@@ -2,9 +2,8 @@
 
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
 import { useSensorContext } from './SensorProvider';
-import { RecordingContextType, DriveMetadata } from '@/types/recordings';
+import { RecordingContextType, DriveMetadata, Drive } from '@/types/recordings';
 import { AccelerometerData, GPSData } from '@/types/sensors';
-import { Drive } from '@prisma/client';
 
 const RecordingContext = createContext<RecordingContextType | undefined>(undefined);
 
