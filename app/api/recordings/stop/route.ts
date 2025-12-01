@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     const maxSpeed = speeds.length > 0 ? Math.max(...speeds) : null;
     const avgSpeed =
       speeds.length > 0
-        ? speeds.reduce((a, b) => a + b, 0) / speeds.length
+        ? speeds.reduce((a: number, b: number) => a + b, 0) / speeds.length
         : null;
 
     // Calculate duration
