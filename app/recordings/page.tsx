@@ -113,43 +113,45 @@ export default function RecordingsPage() {
 
         <div className="space-y-3">
           {drives.map((drive) => (
-            <Card key={drive.id} className="bg-zinc-900/50 border-zinc-800 hover:border-zinc-700 transition-colors">
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <CardTitle className="text-lg font-medium text-zinc-100">
-                      {drive.name || 'Untitled Drive'}
-                    </CardTitle>
-                    <p className="text-sm text-zinc-500 mt-1">
-                      {formatDistanceToNow(new Date(drive.createdAt), { addSuffix: true })}
-                    </p>
+            <Link key={drive.id} href={`/recordings/${drive.id}`}>
+              <Card className="bg-zinc-900/50 border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900/70 transition-all cursor-pointer">
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-lg font-medium text-zinc-100">
+                        {drive.name || 'Untitled Drive'}
+                      </CardTitle>
+                      <p className="text-sm text-zinc-500 mt-1">
+                        {formatDistanceToNow(new Date(drive.createdAt), { addSuffix: true })}
+                      </p>
+                    </div>
+                    <Badge className={getStatusColor(drive.status)}>
+                      {drive.status}
+                    </Badge>
                   </div>
-                  <Badge className={getStatusColor(drive.status)}>
-                    {drive.status}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-                  <div className="flex items-center gap-2 text-zinc-400">
-                    <Clock className="h-4 w-4" />
-                    <span>{formatDuration(drive.duration)}</span>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                    <div className="flex items-center gap-2 text-zinc-400">
+                      <Clock className="h-4 w-4" />
+                      <span>{formatDuration(drive.duration)}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-zinc-400">
+                      <MapPin className="h-4 w-4" />
+                      <span>{formatDistance(drive.distance)}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-zinc-400">
+                      <Gauge className="h-4 w-4" />
+                      <span>{formatSpeed(drive.maxSpeed)} max</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-zinc-400">
+                      <Activity className="h-4 w-4" />
+                      <span>{drive.sampleCount} samples</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-zinc-400">
-                    <MapPin className="h-4 w-4" />
-                    <span>{formatDistance(drive.distance)}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-zinc-400">
-                    <Gauge className="h-4 w-4" />
-                    <span>{formatSpeed(drive.maxSpeed)} max</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-zinc-400">
-                    <Activity className="h-4 w-4" />
-                    <span>{drive.sampleCount} samples</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </Link>
           ))}
         </div>
       </div>

@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useSensorContext } from '@/components/providers/SensorProvider';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,9 +10,10 @@ import { Smartphone, MapPin, AlertCircle } from 'lucide-react';
 
 export function PermissionGate({ children }: { children: React.ReactNode }) {
   const { permissions, requestAllPermissions, permissionError } = useSensorContext();
+  const [skipped, setSkipped] = useState(false);
 
-  // If both permissions are granted, render children
-  if (permissions.motion === 'granted' && permissions.location === 'granted') {
+  // If both permissions are granted or user skipped, render children
+  if (skipped || (permissions.motion === 'granted' && permissions.location === 'granted')) {
     return <>{children}</>;
   }
 
@@ -22,7 +24,7 @@ export function PermissionGate({ children }: { children: React.ReactNode }) {
         <CardHeader>
           <CardTitle className="text-2xl">Sensor Access Required</CardTitle>
           <CardDescription>
-            This app requires access to your device&apos;s motion sensors and location to function.
+            This app requires access to your device&apos;s motion sensors and location to record drives.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -81,6 +83,14 @@ export function PermissionGate({ children }: { children: React.ReactNode }) {
               </div>
             </>
           )}
+
+          <Button 
+            variant="ghost" 
+            onClick={() => setSkipped(true)} 
+            className="w-full text-muted-foreground"
+          >
+            Continue without sensors
+          </Button>
         </CardContent>
       </Card>
     </div>
