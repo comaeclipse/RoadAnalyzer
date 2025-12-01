@@ -7,7 +7,9 @@ import { NumericDisplay } from './NumericDisplay';
 import { ChartDisplay } from './ChartDisplay';
 import { MapWrapper } from './MapWrapper';
 import { RecordingControls } from '@/components/recordings/RecordingControls';
-import { Activity, Smartphone, MapPin } from 'lucide-react';
+import { Activity, Smartphone, MapPin, History } from 'lucide-react';
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
 
 export function SensorDashboard() {
   const { isEnabled, accelerometer, gps } = useSensorContext();
@@ -27,7 +29,13 @@ export function SensorDashboard() {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/recordings">
+              <Button variant="outline" size="sm" className="gap-2">
+                <History className="w-4 h-4" />
+                Recordings
+              </Button>
+            </Link>
             <Badge variant={isEnabled ? 'default' : 'outline'} className="text-sm">
               <Activity className="w-4 h-4 mr-1" />
               {isEnabled ? 'Active' : 'Inactive'}
