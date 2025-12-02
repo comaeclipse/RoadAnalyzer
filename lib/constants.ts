@@ -1,5 +1,5 @@
 export const SENSOR_CONFIG = {
-  ACCELEROMETER_INTERVAL: 200, // 5 Hz (reduced from 10Hz for better performance)
+  ACCELEROMETER_INTERVAL: 100, // 10 Hz (increased from 5Hz for better detail)
   GPS_INTERVAL: 1000,           // 1 Hz
   MAX_HISTORY_LENGTH: 50,
   DEFAULT_MAP_ZOOM: 15,

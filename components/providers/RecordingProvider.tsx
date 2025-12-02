@@ -8,7 +8,7 @@ import { AccelerometerData, GPSData } from '@/types/sensors';
 const RecordingContext = createContext<RecordingContextType | undefined>(undefined);
 
 // Buffer thresholds
-const ACCEL_BUFFER_THRESHOLD = 50; // 50 samples = ~10 seconds at 5Hz
+const ACCEL_BUFFER_THRESHOLD = 100; // 100 samples = ~10 seconds at 10Hz
 const GPS_BUFFER_THRESHOLD = 10;    // 10 samples = ~10 seconds at 1Hz
 const FLUSH_INTERVAL = 10000;       // 10 seconds
 

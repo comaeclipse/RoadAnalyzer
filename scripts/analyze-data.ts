@@ -114,7 +114,7 @@ async function analyzeData() {
       const accelFrequency = drive.duration ? drive._count.accelerometerData / (drive.duration / 1000) : 0;
       const gpsFrequency = drive.duration ? drive._count.gpsData / (drive.duration / 1000) : 0;
 
-      console.log(`   Accel frequency: ${accelFrequency.toFixed(2)} Hz (target: 5 Hz)`);
+      console.log(`   Accel frequency: ${accelFrequency.toFixed(2)} Hz (target: 10 Hz)`);
       console.log(`   GPS frequency: ${gpsFrequency.toFixed(2)} Hz (target: 1 Hz)`);
 
       // Check for GPS nulls

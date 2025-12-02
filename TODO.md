@@ -323,7 +323,7 @@
 ### Database Schema
 ```
 Drive (main session table)
-├── AccelerometerSample (5 Hz data)
+├── AccelerometerSample (10 Hz data)
 └── GpsSample (1 Hz data)
 ```
 
@@ -331,7 +331,7 @@ Drive (main session table)
 ```
 Sensors → Client Buffer → Batch API → Database
    ↓           ↓              ↓          ↓
- 5Hz/1Hz   Accumulate     Every 10s  Bulk Insert
+10Hz/1Hz   Accumulate     Every 10s  Bulk Insert
 ```
 
 ### API Structure
@@ -486,11 +486,13 @@ These features were not in the original TODO but have been successfully implemen
 
 ## 💾 Storage Estimates
 
-**Per Hour of Driving:**
-- Accelerometer: 18,000 samples × 80 bytes = 1.4 MB
+**Per Hour of Driving (at 10 Hz):**
+- Accelerometer: 36,000 samples × 80 bytes = 2.8 MB
 - GPS: 3,600 samples × 100 bytes = 0.36 MB
-- **Total: ~1.8 MB/hour**
+- **Total: ~3.2 MB/hour**
 
 **Monthly Usage (20 drives, 30 min avg):**
-- 20 drives × 0.9 MB = **18 MB/month**
-- Neon Free Tier: 512 MB storage (enough for ~280 hours of driving)
+- 20 drives × 1.6 MB = **32 MB/month**
+- Neon Free Tier: 512 MB storage (enough for ~160 hours of driving)
+
+**Note:** Increased from 5 Hz to 10 Hz for better detail and bump detection
