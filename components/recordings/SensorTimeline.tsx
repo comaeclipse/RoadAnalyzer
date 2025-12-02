@@ -57,7 +57,7 @@ export function SensorTimeline({ accelPoints, startTime }: SensorTimelineProps) 
     const roughnessData = calculateRoughness(accelPoints, 15);
     
     return roughnessData.map((point) => ({
-      time: (point.timestamp - startTime) / 1000, // seconds
+      time: (point.time - startTime) / 1000, // seconds
       roughness: point.roughness,
       bump: point.zAccel,
     }));
