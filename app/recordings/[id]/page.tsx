@@ -5,7 +5,8 @@ import { useParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, MapPin, Gauge, Clock, Activity } from 'lucide-react';
+import { ArrowLeft, MapPin, Gauge, Clock, Activity, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
 import dynamic from 'next/dynamic';
@@ -52,11 +53,30 @@ interface AccelPoint {
 
 export default function RecordingDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const [drive, setDrive] = useState<Drive | null>(null);
   const [gpsPoints, setGpsPoints] = useState<GpsPoint[]>([]);
   const [accelPoints, setAccelPoints] = useState<AccelPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (!confirm('Are you sure you want to delete this recording? This cannot be undone.')) {
+      return;
+    }
+    
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/recordings/${params.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete');
+      router.push('/recordings');
+    } catch (err) {
+      console.error('Failed to delete:', err);
+      alert('Failed to delete recording');
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     async function fetchDrive() {
@@ -163,6 +183,15 @@ export default function RecordingDetailPage() {
             </p>
           </div>
           {getStatusBadge(drive.status)}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleDelete}
+            disabled={deleting}
+            className="text-gray-400 hover:text-red-600 hover:bg-red-50"
+          >
+            <Trash2 className="h-5 w-5" />
+          </Button>
         </div>
 
         {/* Stats Grid */}

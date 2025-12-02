@@ -85,3 +85,24 @@ export async function GET(
   }
 }
 
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const { id } = params;
+
+    // Delete the drive (cascades to samples due to schema)
+    await prisma.drive.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete recording:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete recording' },
+      { status: 500 }
+    );
+  }
+}

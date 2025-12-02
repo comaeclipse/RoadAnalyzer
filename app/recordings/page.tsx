@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, MapPin, Gauge, Clock, Activity } from 'lucide-react';
+import { ArrowLeft, MapPin, Gauge, Clock, Activity, Route } from 'lucide-react';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -44,6 +44,21 @@ export default function RecordingsPage() {
     fetchDrives();
   }, []);
 
+  // Calculate summary stats
+  const stats = useMemo(() => {
+    const completed = drives.filter((d) => d.status === 'COMPLETED');
+    const totalDistance = completed.reduce((sum, d) => sum + (d.distance || 0), 0);
+    const totalSamples = completed.reduce((sum, d) => sum + d.sampleCount, 0);
+    const totalDuration = completed.reduce((sum, d) => sum + (d.duration || 0), 0);
+    
+    return {
+      totalRecordings: completed.length,
+      totalDistance,
+      totalSamples,
+      totalDuration,
+    };
+  }, [drives]);
+
   const formatDuration = (ms: number | null) => {
     if (!ms) return '-';
     const seconds = Math.floor(ms / 1000);
@@ -58,10 +73,23 @@ export default function RecordingsPage() {
     return `${(meters / 1000).toFixed(2)} km`;
   };
 
+  const formatDistanceMiles = (meters: number) => {
+    const miles = meters / 1609.344;
+    return `${miles.toFixed(1)} mi`;
+  };
+
   const formatSpeed = (mps: number | null) => {
     if (!mps) return '-';
     const mph = mps * 2.237;
     return `${mph.toFixed(1)} mph`;
+  };
+
+  const formatTotalDuration = (ms: number) => {
+    const totalMinutes = Math.floor(ms / 60000);
+    if (totalMinutes < 60) return `${totalMinutes} min`;
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    return `${hours}h ${mins}m`;
   };
 
   const getStatusBadge = (status: string) => {
@@ -89,6 +117,28 @@ export default function RecordingsPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Recordings</h1>
         </div>
 
+        {/* Summary Stats */}
+        {!loading && !error && drives.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+            <div className="px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Recordings</p>
+              <p className="text-xl font-semibold text-gray-900">{stats.totalRecordings}</p>
+            </div>
+            <div className="px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Total Distance</p>
+              <p className="text-xl font-semibold text-gray-900">{formatDistanceMiles(stats.totalDistance)}</p>
+            </div>
+            <div className="px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Total Time</p>
+              <p className="text-xl font-semibold text-gray-900">{formatTotalDuration(stats.totalDuration)}</p>
+            </div>
+            <div className="px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Samples</p>
+              <p className="text-xl font-semibold text-gray-900">{stats.totalSamples.toLocaleString()}</p>
+            </div>
+          </div>
+        )}
+
         {loading && (
           <div className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400"></div>
@@ -111,7 +161,7 @@ export default function RecordingsPage() {
           </Card>
         )}
 
-        <div className="space-y-3">
+        <div className="space-y-4">
           {drives.map((drive) => (
             <Link key={drive.id} href={`/recordings/${drive.id}`}>
               <Card className="border-gray-200 hover:border-gray-300 hover:shadow-sm transition-all cursor-pointer">
