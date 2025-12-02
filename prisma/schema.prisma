@@ -32,6 +32,10 @@ model Drive {
   avgSpeed    Float?    // m/s
   sampleCount Int       @default(0)
 
+  // Road roughness analysis
+  roughnessScore     Float?  // 0-100 (100 = smoothest)
+  roughnessBreakdown Json?   // { smooth: %, light: %, moderate: %, rough: %, veryRough: % }
+
   // Relations
   accelerometerData AccelerometerSample[]
   gpsData           GpsSample[]

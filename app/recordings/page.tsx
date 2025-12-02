@@ -4,9 +4,17 @@ import { useEffect, useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, MapPin, Gauge, Clock, Activity, Route } from 'lucide-react';
+import { ArrowLeft, MapPin, Gauge, Clock, Activity } from 'lucide-react';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
+
+interface RoughnessBreakdown {
+  smooth: number;
+  light: number;
+  moderate: number;
+  rough: number;
+  veryRough: number;
+}
 
 interface Drive {
   id: string;
@@ -20,6 +28,24 @@ interface Drive {
   avgSpeed: number | null;
   sampleCount: number;
   createdAt: string;
+  roughnessScore: number | null;
+  roughnessBreakdown: RoughnessBreakdown | null;
+}
+
+function getRoughnessLabel(score: number): string {
+  if (score >= 90) return 'Excellent';
+  if (score >= 75) return 'Good';
+  if (score >= 50) return 'Fair';
+  if (score >= 25) return 'Poor';
+  return 'Very Poor';
+}
+
+function getRoughnessColor(score: number): string {
+  if (score >= 90) return 'text-green-600';
+  if (score >= 75) return 'text-lime-600';
+  if (score >= 50) return 'text-yellow-600';
+  if (score >= 25) return 'text-orange-600';
+  return 'text-red-600';
 }
 
 export default function RecordingsPage() {
@@ -51,11 +77,18 @@ export default function RecordingsPage() {
     const totalSamples = completed.reduce((sum, d) => sum + d.sampleCount, 0);
     const totalDuration = completed.reduce((sum, d) => sum + (d.duration || 0), 0);
     
+    // Calculate average roughness score
+    const drivesWithRoughness = completed.filter((d) => d.roughnessScore !== null);
+    const avgRoughness = drivesWithRoughness.length > 0
+      ? drivesWithRoughness.reduce((sum, d) => sum + (d.roughnessScore || 0), 0) / drivesWithRoughness.length
+      : null;
+    
     return {
       totalRecordings: completed.length,
       totalDistance,
       totalSamples,
       totalDuration,
+      avgRoughness,
     };
   }, [drives]);
 
@@ -119,22 +152,32 @@ export default function RecordingsPage() {
 
         {/* Summary Stats */}
         {!loading && !error && drives.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
             <div className="px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
               <p className="text-xs text-gray-500 uppercase tracking-wide">Recordings</p>
               <p className="text-xl font-semibold text-gray-900">{stats.totalRecordings}</p>
             </div>
             <div className="px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Total Distance</p>
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Distance</p>
               <p className="text-xl font-semibold text-gray-900">{formatDistanceMiles(stats.totalDistance)}</p>
             </div>
             <div className="px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Total Time</p>
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Time</p>
               <p className="text-xl font-semibold text-gray-900">{formatTotalDuration(stats.totalDuration)}</p>
             </div>
             <div className="px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
               <p className="text-xs text-gray-500 uppercase tracking-wide">Samples</p>
               <p className="text-xl font-semibold text-gray-900">{stats.totalSamples.toLocaleString()}</p>
+            </div>
+            <div className="px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Avg Quality</p>
+              {stats.avgRoughness !== null ? (
+                <p className={`text-xl font-semibold ${getRoughnessColor(stats.avgRoughness)}`}>
+                  {Math.round(stats.avgRoughness)}
+                </p>
+              ) : (
+                <p className="text-xl font-semibold text-gray-400">-</p>
+              )}
             </div>
           </div>
         )}
@@ -161,9 +204,9 @@ export default function RecordingsPage() {
           </Card>
         )}
 
-        <div className="space-y-4">
+        <div className="flex flex-col gap-4">
           {drives.map((drive) => (
-            <Link key={drive.id} href={`/recordings/${drive.id}`}>
+            <Link key={drive.id} href={`/recordings/${drive.id}`} className="block">
               <Card className="border-gray-200 hover:border-gray-300 hover:shadow-sm transition-all cursor-pointer">
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between">
@@ -175,7 +218,14 @@ export default function RecordingsPage() {
                         {formatDistanceToNow(new Date(drive.createdAt), { addSuffix: true })}
                       </p>
                     </div>
-                    {getStatusBadge(drive.status)}
+                    <div className="flex items-center gap-2">
+                      {drive.roughnessScore !== null && (
+                        <Badge variant="outline" className={`${getRoughnessColor(drive.roughnessScore)} border-gray-200`}>
+                          {Math.round(drive.roughnessScore)} — {getRoughnessLabel(drive.roughnessScore)}
+                        </Badge>
+                      )}
+                      {getStatusBadge(drive.status)}
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>

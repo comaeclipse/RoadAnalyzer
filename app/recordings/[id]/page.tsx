@@ -22,6 +22,14 @@ const RouteMap = dynamic(() => import('@/components/recordings/RouteMap'), {
   ),
 });
 
+interface RoughnessBreakdown {
+  smooth: number;
+  light: number;
+  moderate: number;
+  rough: number;
+  veryRough: number;
+}
+
 interface Drive {
   id: string;
   name: string | null;
@@ -34,6 +42,8 @@ interface Drive {
   avgSpeed: number | null;
   sampleCount: number;
   createdAt: string;
+  roughnessScore: number | null;
+  roughnessBreakdown: RoughnessBreakdown | null;
 }
 
 interface GpsPoint {
@@ -49,6 +59,30 @@ interface AccelPoint {
   z: number;
   magnitude: number;
   timestamp: number;
+}
+
+function getRoughnessLabel(score: number): string {
+  if (score >= 90) return 'Excellent';
+  if (score >= 75) return 'Good';
+  if (score >= 50) return 'Fair';
+  if (score >= 25) return 'Poor';
+  return 'Very Poor';
+}
+
+function getRoughnessColor(score: number): string {
+  if (score >= 90) return 'text-green-600';
+  if (score >= 75) return 'text-lime-600';
+  if (score >= 50) return 'text-yellow-600';
+  if (score >= 25) return 'text-orange-600';
+  return 'text-red-600';
+}
+
+function getRoughnessBgColor(score: number): string {
+  if (score >= 90) return 'bg-green-50 border-green-200';
+  if (score >= 75) return 'bg-lime-50 border-lime-200';
+  if (score >= 50) return 'bg-yellow-50 border-yellow-200';
+  if (score >= 25) return 'bg-orange-50 border-orange-200';
+  return 'bg-red-50 border-red-200';
 }
 
 export default function RecordingDetailPage() {
@@ -194,6 +228,61 @@ export default function RecordingDetailPage() {
           </Button>
         </div>
 
+        {/* Road Quality Score */}
+        {drive.roughnessScore !== null && (
+          <Card className={`mb-6 ${getRoughnessBgColor(drive.roughnessScore)}`}>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-600 mb-1">Road Quality Score</p>
+                  <div className="flex items-baseline gap-2">
+                    <span className={`text-4xl font-bold ${getRoughnessColor(drive.roughnessScore)}`}>
+                      {Math.round(drive.roughnessScore)}
+                    </span>
+                    <span className={`text-lg ${getRoughnessColor(drive.roughnessScore)}`}>
+                      {getRoughnessLabel(drive.roughnessScore)}
+                    </span>
+                  </div>
+                </div>
+                {drive.roughnessBreakdown && (
+                  <div className="flex gap-3 text-xs">
+                    <div className="text-center">
+                      <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-medium mb-1">
+                        {drive.roughnessBreakdown.smooth}%
+                      </div>
+                      <span className="text-gray-500">Smooth</span>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-8 h-8 rounded-full bg-lime-100 flex items-center justify-center text-lime-700 font-medium mb-1">
+                        {drive.roughnessBreakdown.light}%
+                      </div>
+                      <span className="text-gray-500">Light</span>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-8 h-8 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-700 font-medium mb-1">
+                        {drive.roughnessBreakdown.moderate}%
+                      </div>
+                      <span className="text-gray-500">Mod</span>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center text-orange-700 font-medium mb-1">
+                        {drive.roughnessBreakdown.rough}%
+                      </div>
+                      <span className="text-gray-500">Rough</span>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center text-red-700 font-medium mb-1">
+                        {drive.roughnessBreakdown.veryRough}%
+                      </div>
+                      <span className="text-gray-500">V.Rough</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Stats Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           <Card className="border-gray-200">
@@ -258,10 +347,10 @@ export default function RecordingDetailPage() {
           </CardContent>
         </Card>
 
-        {/* Road Roughness */}
+        {/* Road Roughness Timeline */}
         <Card className="border-gray-200">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg font-medium text-gray-900">Road Roughness</CardTitle>
+            <CardTitle className="text-lg font-medium text-gray-900">Roughness Over Time</CardTitle>
           </CardHeader>
           <CardContent>
             <SensorTimeline

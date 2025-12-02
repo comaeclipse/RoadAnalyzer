@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { StopRecordingRequest } from '@/types/recordings';
+import { analyzeRoughness } from '@/lib/roughness';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch GPS and accelerometer data to calculate statistics
-    const [gpsData, accelCount] = await Promise.all([
+    const [gpsData, accelData] = await Promise.all([
       prisma.gpsSample.findMany({
         where: { driveId },
         orderBy: { timestamp: 'asc' },
@@ -25,7 +26,16 @@ export async function POST(request: NextRequest) {
           distanceFromPrev: true,
         },
       }),
-      prisma.accelerometerSample.count({ where: { driveId } }),
+      prisma.accelerometerSample.findMany({
+        where: { driveId },
+        orderBy: { timestamp: 'asc' },
+        select: {
+          x: true,
+          y: true,
+          z: true,
+          timestamp: true,
+        },
+      }),
     ]);
 
     // Calculate total distance
@@ -51,6 +61,16 @@ export async function POST(request: NextRequest) {
     const endTime = gpsData[gpsData.length - 1]?.timestamp || BigInt(Date.now());
     const duration = Number(endTime - startTime);
 
+    // Calculate road roughness
+    const accelSamples = accelData.map((s) => ({
+      x: s.x,
+      y: s.y,
+      z: s.z,
+      timestamp: Number(s.timestamp),
+    }));
+    
+    const roughnessResult = analyzeRoughness(accelSamples);
+
     // Update drive with final statistics
     const drive = await prisma.drive.update({
       where: { id: driveId },
@@ -61,7 +81,9 @@ export async function POST(request: NextRequest) {
         distance: totalDistance,
         maxSpeed,
         avgSpeed,
-        sampleCount: gpsData.length + accelCount,
+        sampleCount: gpsData.length + accelData.length,
+        roughnessScore: roughnessResult?.score ?? null,
+        roughnessBreakdown: roughnessResult?.breakdown ?? null,
       },
     });
 

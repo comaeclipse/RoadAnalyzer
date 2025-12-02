@@ -21,6 +21,8 @@ export async function GET() {
         avgSpeed: true,
         sampleCount: true,
         createdAt: true,
+        roughnessScore: true,
+        roughnessBreakdown: true,
       },
     });
 
