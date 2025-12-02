@@ -76,7 +76,21 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording]);
 
-  // Flush buffers on unmount or when stopping
+  // Warn user before leaving if recording is active
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isRecording) {
+        e.preventDefault();
+        e.returnValue = 'Recording in progress. Are you sure you want to leave?';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isRecording]);
+
+  // Flush buffers and stop recording on unmount
   useEffect(() => {
     return () => {
       if (isRecording && currentDriveId) {
@@ -108,9 +122,37 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
           );
           navigator.sendBeacon('/api/recordings/sensor-data', blob);
         }
+
+        // Also try to stop the recording via sendBeacon
+        const stopBlob = new Blob(
+          [JSON.stringify({ driveId: currentDriveId })],
+          { type: 'application/json' }
+        );
+        navigator.sendBeacon('/api/recordings/stop', stopBlob);
       }
     };
   }, [isRecording, currentDriveId]);
+
+  // Check for orphaned recording on mount
+  useEffect(() => {
+    const orphanedDriveId = localStorage.getItem('activeRecording');
+    if (orphanedDriveId && !isRecording) {
+      // Try to stop the orphaned recording
+      fetch('/api/recordings/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driveId: orphanedDriveId }),
+      })
+        .then(() => {
+          console.log('Recovered orphaned recording:', orphanedDriveId);
+          localStorage.removeItem('activeRecording');
+        })
+        .catch((err) => {
+          console.error('Failed to recover orphaned recording:', err);
+          localStorage.removeItem('activeRecording');
+        });
+    }
+  }, []); // Only run on mount
 
   const flushAccelerometerBuffer = useCallback(async () => {
     if (
