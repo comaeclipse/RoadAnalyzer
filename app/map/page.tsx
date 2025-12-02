@@ -116,17 +116,47 @@ export default function MapPage() {
               </Card>
             </div>
 
-            {/* Route list */}
-            <div className="lg:col-span-1">
+            {/* Sidebar */}
+            <div className="lg:col-span-1 space-y-4">
+              {/* Legend */}
+              <Card className="border-gray-200">
+                <CardContent className="p-3">
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Road Quality</p>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-1 rounded-full bg-green-500"></div>
+                      <span className="text-xs text-gray-600">90+ Excellent</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-1 rounded-full bg-lime-500"></div>
+                      <span className="text-xs text-gray-600">75-89 Good</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-1 rounded-full bg-yellow-500"></div>
+                      <span className="text-xs text-gray-600">50-74 Fair</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-1 rounded-full bg-orange-500"></div>
+                      <span className="text-xs text-gray-600">25-49 Poor</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-1 rounded-full bg-red-500"></div>
+                      <span className="text-xs text-gray-600">0-24 Very Poor</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Route list */}
               <Card className="border-gray-200">
                 <CardContent className="p-3">
                   <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Recordings</p>
-                  <div className="space-y-2 max-h-[calc(100vh-16rem)] overflow-y-auto">
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
                     {routes.map((route) => (
                       <button
                         key={route.id}
                         onClick={() => setSelectedRouteId(selectedRouteId === route.id ? null : route.id)}
-                        className={`w-full text-left p-3 rounded-lg border transition-all ${
+                        className={`w-full text-left p-2.5 rounded-lg border transition-all ${
                           selectedRouteId === route.id
                             ? 'border-gray-400 bg-gray-50'
                             : 'border-gray-200 hover:border-gray-300'
@@ -135,7 +165,7 @@ export default function MapPage() {
                         <p className="text-sm font-medium text-gray-900 truncate">
                           {route.name || 'Untitled'}
                         </p>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                        <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
                           <span>{formatDistance(route.distance || 0)}</span>
                           {route.roughnessScore !== null && (
                             <span className={getRoughnessColor(route.roughnessScore)}>
