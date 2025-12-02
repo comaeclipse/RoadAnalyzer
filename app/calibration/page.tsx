@@ -29,14 +29,14 @@ export default function CalibrationPage() {
         <h2 className="text-lg font-semibold mb-3">What is Baseline Calibration?</h2>
         <div className="space-y-3 text-sm text-gray-700 dark:text-gray-300">
           <p>
-            Baseline calibration measures your device's accelerometer when completely still.
+            Baseline calibration measures your device&apos;s accelerometer when completely still.
             This helps us understand:
           </p>
           <ul className="list-disc list-inside space-y-1 ml-4">
             <li><strong>Sensor noise floor</strong> - The minimum detectable vibration level</li>
             <li><strong>Sensor bias</strong> - Any systematic error in measurements</li>
-            <li><strong>Gravity accuracy</strong> - How well the sensor measures Earth's gravity (9.8 m/s²)</li>
-            <li><strong>Overall sensor quality</strong> - Health check for your device's sensors</li>
+            <li><strong>Gravity accuracy</strong> - How well the sensor measures Earth&apos;s gravity (9.8 m/s²)</li>
+            <li><strong>Overall sensor quality</strong> - Health check for your device&apos;s sensors</li>
           </ul>
 
           <h3 className="font-semibold mt-4">Why is this useful?</h3>
