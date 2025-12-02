@@ -7,7 +7,7 @@ import { NumericDisplay } from './NumericDisplay';
 import { ChartDisplay } from './ChartDisplay';
 import { MapWrapper } from './MapWrapper';
 import { RecordingControls } from '@/components/recordings/RecordingControls';
-import { Activity, Smartphone, MapPin, History } from 'lucide-react';
+import { Activity, Smartphone, MapPin, History, Map } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 
@@ -34,6 +34,12 @@ export function SensorDashboard() {
               <Button variant="outline" size="sm" className="gap-2 border-gray-300 text-gray-700 hover:bg-gray-50">
                 <History className="w-4 h-4" />
                 Recordings
+              </Button>
+            </Link>
+            <Link href="/map">
+              <Button variant="outline" size="sm" className="gap-2 border-gray-300 text-gray-700 hover:bg-gray-50">
+                <Map className="w-4 h-4" />
+                Map
               </Button>
             </Link>
             <Badge variant="outline" className={`text-sm border-gray-300 ${isEnabled ? 'bg-gray-100 text-gray-900' : 'text-gray-500'}`}>
