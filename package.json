@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "prisma generate --no-hints && prisma migrate deploy && next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "backfill-roughness": "tsx scripts/backfill-roughness.ts",
+    "analyze-data": "tsx scripts/analyze-data.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",

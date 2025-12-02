@@ -40,3 +40,7 @@ next-env.d.ts
 .claude/
 
 /lib/generated/prisma
+
+# temporary analysis files
+recordings.json
+drive-*.json
