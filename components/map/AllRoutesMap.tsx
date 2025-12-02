@@ -17,17 +17,33 @@ interface AllRoutesMapProps {
   onRouteSelect: (id: string | null) => void;
 }
 
-// Get color based on roughness or default
-function getRouteColor(roughnessScore: number | null, isSelected: boolean): string {
+// Color palette for routes without roughness scores
+const ROUTE_COLORS = [
+  '#e11d48', // rose
+  '#7c3aed', // violet
+  '#2563eb', // blue
+  '#0891b2', // cyan
+  '#059669', // emerald
+  '#ca8a04', // yellow
+  '#ea580c', // orange
+  '#dc2626', // red
+];
+
+// Get color based on roughness or assign from palette
+function getRouteColor(roughnessScore: number | null, isSelected: boolean, index: number): string {
   if (isSelected) return '#1f2937'; // charcoal when selected
   
-  if (roughnessScore === null) return '#9ca3af'; // gray if no score
+  // If has roughness score, use roughness-based colors
+  if (roughnessScore !== null) {
+    if (roughnessScore >= 90) return '#22c55e';
+    if (roughnessScore >= 75) return '#84cc16';
+    if (roughnessScore >= 50) return '#eab308';
+    if (roughnessScore >= 25) return '#f97316';
+    return '#ef4444';
+  }
   
-  if (roughnessScore >= 90) return '#22c55e';
-  if (roughnessScore >= 75) return '#84cc16';
-  if (roughnessScore >= 50) return '#eab308';
-  if (roughnessScore >= 25) return '#f97316';
-  return '#ef4444';
+  // Otherwise use color from palette based on index
+  return ROUTE_COLORS[index % ROUTE_COLORS.length];
 }
 
 function MapController({ routes, selectedRouteId }: { routes: Route[]; selectedRouteId: string | null }) {
@@ -85,12 +101,12 @@ export default function AllRoutesMap({ routes, selectedRouteId, onRouteSelect }:
         scrollWheelZoom={true}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
         />
         <MapController routes={routes} selectedRouteId={selectedRouteId} />
         
-        {sortedRoutes.map((route) => {
+        {sortedRoutes.map((route, index) => {
           const isSelected = route.id === selectedRouteId;
           const positions: [number, number][] = route.points.map((p) => [p.lat, p.lng]);
           
@@ -98,7 +114,7 @@ export default function AllRoutesMap({ routes, selectedRouteId, onRouteSelect }:
             <Polyline
               key={route.id}
               positions={positions}
-              color={getRouteColor(route.roughnessScore, isSelected)}
+              color={getRouteColor(route.roughnessScore, isSelected, index)}
               weight={isSelected ? 5 : 3}
               opacity={selectedRouteId && !isSelected ? 0.4 : 0.9}
               eventHandlers={{
