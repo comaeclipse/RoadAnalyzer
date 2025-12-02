@@ -64,48 +64,48 @@ export default function RecordingsPage() {
     return `${mph.toFixed(1)} mph`;
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusBadge = (status: string) => {
     switch (status) {
       case 'COMPLETED':
-        return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+        return <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">Completed</Badge>;
       case 'RECORDING':
-        return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+        return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">Recording</Badge>;
       case 'FAILED':
-        return 'bg-red-500/20 text-red-400 border-red-500/30';
+        return <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">Failed</Badge>;
       default:
-        return 'bg-zinc-500/20 text-zinc-400 border-zinc-500/30';
+        return <Badge variant="outline">{status}</Badge>;
     }
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div className="min-h-screen bg-white">
       <div className="max-w-4xl mx-auto p-4 sm:p-6">
         <div className="flex items-center gap-4 mb-6">
           <Link href="/">
-            <Button variant="ghost" size="icon" className="text-zinc-400 hover:text-zinc-100">
+            <Button variant="ghost" size="icon" className="text-gray-500 hover:text-gray-900 hover:bg-gray-100">
               <ArrowLeft className="h-5 w-5" />
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold tracking-tight">Recordings</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Recordings</h1>
         </div>
 
         {loading && (
           <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400"></div>
           </div>
         )}
 
         {error && (
-          <Card className="bg-red-500/10 border-red-500/30">
-            <CardContent className="py-4 text-center text-red-400">
+          <Card className="border-red-200 bg-red-50">
+            <CardContent className="py-4 text-center text-red-600">
               {error}
             </CardContent>
           </Card>
         )}
 
         {!loading && !error && drives.length === 0 && (
-          <Card className="bg-zinc-900/50 border-zinc-800">
-            <CardContent className="py-12 text-center text-zinc-500">
+          <Card className="border-gray-200">
+            <CardContent className="py-12 text-center text-gray-500">
               No recordings yet. Start a recording from the dashboard!
             </CardContent>
           </Card>
@@ -114,38 +114,36 @@ export default function RecordingsPage() {
         <div className="space-y-3">
           {drives.map((drive) => (
             <Link key={drive.id} href={`/recordings/${drive.id}`}>
-              <Card className="bg-zinc-900/50 border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900/70 transition-all cursor-pointer">
+              <Card className="border-gray-200 hover:border-gray-300 hover:shadow-sm transition-all cursor-pointer">
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between">
                     <div>
-                      <CardTitle className="text-lg font-medium text-zinc-100">
+                      <CardTitle className="text-lg font-medium text-gray-900">
                         {drive.name || 'Untitled Drive'}
                       </CardTitle>
-                      <p className="text-sm text-zinc-500 mt-1">
+                      <p className="text-sm text-gray-500 mt-1">
                         {formatDistanceToNow(new Date(drive.createdAt), { addSuffix: true })}
                       </p>
                     </div>
-                    <Badge className={getStatusColor(drive.status)}>
-                      {drive.status}
-                    </Badge>
+                    {getStatusBadge(drive.status)}
                   </div>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-                    <div className="flex items-center gap-2 text-zinc-400">
-                      <Clock className="h-4 w-4" />
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Clock className="h-4 w-4 text-gray-400" />
                       <span>{formatDuration(drive.duration)}</span>
                     </div>
-                    <div className="flex items-center gap-2 text-zinc-400">
-                      <MapPin className="h-4 w-4" />
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <MapPin className="h-4 w-4 text-gray-400" />
                       <span>{formatDistance(drive.distance)}</span>
                     </div>
-                    <div className="flex items-center gap-2 text-zinc-400">
-                      <Gauge className="h-4 w-4" />
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Gauge className="h-4 w-4 text-gray-400" />
                       <span>{formatSpeed(drive.maxSpeed)} max</span>
                     </div>
-                    <div className="flex items-center gap-2 text-zinc-400">
-                      <Activity className="h-4 w-4" />
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Activity className="h-4 w-4 text-gray-400" />
                       <span>{drive.sampleCount} samples</span>
                     </div>
                   </div>
@@ -158,4 +156,3 @@ export default function RecordingsPage() {
     </div>
   );
 }
-

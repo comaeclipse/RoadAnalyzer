@@ -14,39 +14,39 @@ interface RouteMapProps {
   points: GpsPoint[];
 }
 
-// Custom marker icons
+// Custom marker icons - charcoal theme
 const startIcon = new L.DivIcon({
   className: 'custom-marker',
   html: `<div style="
-    width: 16px; 
-    height: 16px; 
-    background: #10b981; 
-    border: 3px solid white; 
+    width: 14px; 
+    height: 14px; 
+    background: #374151; 
+    border: 2px solid white; 
     border-radius: 50%; 
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
   "></div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
+  iconSize: [14, 14],
+  iconAnchor: [7, 7],
 });
 
 const endIcon = new L.DivIcon({
   className: 'custom-marker',
   html: `<div style="
-    width: 16px; 
-    height: 16px; 
-    background: #ef4444; 
-    border: 3px solid white; 
+    width: 14px; 
+    height: 14px; 
+    background: #6b7280; 
+    border: 2px solid white; 
     border-radius: 50%; 
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
   "></div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
+  iconSize: [14, 14],
+  iconAnchor: [7, 7],
 });
 
 export default function RouteMap({ points }: RouteMapProps) {
   if (points.length === 0) {
     return (
-      <div className="h-[400px] bg-zinc-800 rounded-lg flex items-center justify-center text-zinc-500">
+      <div className="h-[400px] bg-gray-50 rounded-lg flex items-center justify-center text-gray-400 border border-gray-200">
         No GPS data
       </div>
     );
@@ -73,7 +73,7 @@ export default function RouteMap({ points }: RouteMapProps) {
   };
 
   return (
-    <div className="h-[400px] rounded-lg overflow-hidden">
+    <div className="h-[400px] rounded-lg overflow-hidden border border-gray-200">
       <MapContainer
         bounds={bounds}
         style={{ height: '100%', width: '100%' }}
@@ -84,12 +84,12 @@ export default function RouteMap({ points }: RouteMapProps) {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         
-        {/* Route line */}
+        {/* Route line - charcoal */}
         <Polyline
           positions={polylinePositions}
-          color="#10b981"
-          weight={4}
-          opacity={0.8}
+          color="#374151"
+          weight={3}
+          opacity={0.9}
         />
 
         {/* Start marker */}

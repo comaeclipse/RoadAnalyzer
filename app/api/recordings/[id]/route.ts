@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -32,17 +34,30 @@ export async function GET(
       );
     }
 
-    // Fetch GPS data for the route
-    const gpsData = await prisma.gpsSample.findMany({
-      where: { driveId: id },
-      orderBy: { timestamp: 'asc' },
-      select: {
-        latitude: true,
-        longitude: true,
-        speed: true,
-        timestamp: true,
-      },
-    });
+    // Fetch GPS and accelerometer data in parallel
+    const [gpsData, accelData] = await Promise.all([
+      prisma.gpsSample.findMany({
+        where: { driveId: id },
+        orderBy: { timestamp: 'asc' },
+        select: {
+          latitude: true,
+          longitude: true,
+          speed: true,
+          timestamp: true,
+        },
+      }),
+      prisma.accelerometerSample.findMany({
+        where: { driveId: id },
+        orderBy: { timestamp: 'asc' },
+        select: {
+          x: true,
+          y: true,
+          z: true,
+          magnitude: true,
+          timestamp: true,
+        },
+      }),
+    ]);
 
     // Convert BigInt timestamps to numbers for JSON serialization
     const gpsPoints = gpsData.map((point) => ({
@@ -52,7 +67,15 @@ export async function GET(
       timestamp: Number(point.timestamp),
     }));
 
-    return NextResponse.json({ drive, gpsPoints });
+    const accelPoints = accelData.map((point) => ({
+      x: point.x,
+      y: point.y,
+      z: point.z,
+      magnitude: point.magnitude,
+      timestamp: Number(point.timestamp),
+    }));
+
+    return NextResponse.json({ drive, gpsPoints, accelPoints });
   } catch (error) {
     console.error('Failed to fetch recording:', error);
     return NextResponse.json(

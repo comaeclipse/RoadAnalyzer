@@ -64,9 +64,9 @@ export function RecordingControls() {
             size="lg"
             onClick={handleStart}
             disabled={isProcessing}
-            className="bg-red-600 hover:bg-red-700 text-white font-semibold"
+            className="bg-gray-900 hover:bg-gray-800 text-white font-medium"
           >
-            <div className="w-4 h-4 mr-2 rounded-full bg-white" />
+            <div className="w-3 h-3 mr-2 rounded-full bg-red-500" />
             Start Recording
           </Button>
         ) : (
@@ -76,32 +76,32 @@ export function RecordingControls() {
               onClick={handleStop}
               disabled={isProcessing}
               variant="outline"
-              className="font-semibold"
+              className="font-medium border-gray-300 text-gray-900 hover:bg-gray-50"
             >
-              <div className="w-4 h-4 mr-2 bg-gray-600" />
+              <div className="w-3 h-3 mr-2 bg-gray-900" />
               Stop Recording
             </Button>
 
             <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="text-sm font-mono">
+              <Badge variant="outline" className="text-sm font-mono border-gray-300 bg-gray-50">
                 {formatDuration(recordingDuration)}
               </Badge>
 
               {bufferStatus.accelerometer > 0 && (
-                <Badge variant="secondary" className="text-xs">
+                <Badge variant="outline" className="text-xs border-gray-300">
                   Accel: {bufferStatus.accelerometer}
                 </Badge>
               )}
 
               {bufferStatus.gps > 0 && (
-                <Badge variant="secondary" className="text-xs">
+                <Badge variant="outline" className="text-xs border-gray-300">
                   GPS: {bufferStatus.gps}
                 </Badge>
               )}
 
               <div className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
-                <span className="text-sm text-muted-foreground">Recording</span>
+                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-sm text-gray-500">Recording</span>
               </div>
             </div>
           </>
@@ -109,7 +109,7 @@ export function RecordingControls() {
       </div>
 
       {recordingError && (
-        <Alert variant="destructive" className="text-sm">
+        <Alert variant="destructive" className="text-sm border-red-200 bg-red-50 text-red-600">
           {recordingError}
         </Alert>
       )}

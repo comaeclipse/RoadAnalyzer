@@ -19,7 +19,7 @@ export function PermissionGate({ children }: { children: React.ReactNode }) {
 
   // Otherwise, show permission request UI
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+    <div className="min-h-screen flex items-center justify-center p-4 bg-white">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-2xl">Sensor Access Required</CardTitle>
