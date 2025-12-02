@@ -122,9 +122,9 @@ async function analyzeData() {
         where: {
           driveId: drive.id,
           OR: [
-            { speed: null },
-            { altitude: null },
-            { accuracy: null },
+            { speed: { equals: null } },
+            { altitude: { equals: null } },
+            { accuracy: { equals: null } },
           ],
         },
       });
