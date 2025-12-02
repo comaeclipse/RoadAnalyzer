@@ -220,7 +220,7 @@ export default function RecordingDetailPage() {
           </CardHeader>
           <CardContent>
             {gpsPoints.length > 0 ? (
-              <RouteMap points={gpsPoints} />
+              <RouteMap points={gpsPoints} accelPoints={accelPoints} />
             ) : (
               <div className="h-[400px] bg-gray-50 rounded-lg flex items-center justify-center text-gray-400 border border-gray-200">
                 No GPS data available for this drive
@@ -229,15 +229,14 @@ export default function RecordingDetailPage() {
           </CardContent>
         </Card>
 
-        {/* Sensor Timeline */}
+        {/* Road Roughness */}
         <Card className="border-gray-200">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg font-medium text-gray-900">Sensor Data</CardTitle>
+            <CardTitle className="text-lg font-medium text-gray-900">Road Roughness</CardTitle>
           </CardHeader>
           <CardContent>
             <SensorTimeline
               accelPoints={accelPoints}
-              gpsPoints={gpsPoints}
               startTime={startTime}
             />
           </CardContent>

@@ -1,6 +1,7 @@
 'use client';
 
-import { MapContainer, TileLayer, Polyline, Marker, Popup } from 'react-leaflet';
+import { useMemo } from 'react';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, CircleMarker } from 'react-leaflet';
 import L from 'leaflet';
 
 interface GpsPoint {
@@ -10,11 +11,37 @@ interface GpsPoint {
   timestamp: number;
 }
 
-interface RouteMapProps {
-  points: GpsPoint[];
+interface AccelPoint {
+  x: number;
+  y: number;
+  z: number;
+  magnitude: number;
+  timestamp: number;
 }
 
-// Custom marker icons - charcoal theme
+interface RouteMapProps {
+  points: GpsPoint[];
+  accelPoints?: AccelPoint[];
+}
+
+// Calculate roughness for a set of accel points
+function calculateRoughness(accelPoints: AccelPoint[]): number {
+  if (accelPoints.length < 2) return 0;
+  const meanZ = accelPoints.reduce((sum, p) => sum + p.z, 0) / accelPoints.length;
+  const variance = accelPoints.reduce((sum, p) => sum + Math.pow(p.z - meanZ, 2), 0) / accelPoints.length;
+  return Math.sqrt(variance);
+}
+
+// Get color based on roughness value
+function getRoughnessColor(roughness: number): string {
+  if (roughness < 0.5) return '#22c55e'; // green - smooth
+  if (roughness < 1.5) return '#84cc16'; // lime - light
+  if (roughness < 3) return '#eab308'; // yellow - moderate
+  if (roughness < 5) return '#f97316'; // orange - rough
+  return '#ef4444'; // red - very rough
+}
+
+// Custom marker icons
 const startIcon = new L.DivIcon({
   className: 'custom-marker',
   html: `<div style="
@@ -43,7 +70,37 @@ const endIcon = new L.DivIcon({
   iconAnchor: [7, 7],
 });
 
-export default function RouteMap({ points }: RouteMapProps) {
+export default function RouteMap({ points, accelPoints = [] }: RouteMapProps) {
+  // Calculate roughness for each GPS segment
+  const segments = useMemo(() => {
+    if (points.length < 2) return [];
+    
+    const result: { positions: [number, number][]; roughness: number; color: string }[] = [];
+    
+    for (let i = 0; i < points.length - 1; i++) {
+      const startTime = points[i].timestamp;
+      const endTime = points[i + 1].timestamp;
+      
+      // Find accel points in this time range
+      const segmentAccel = accelPoints.filter(
+        (a) => a.timestamp >= startTime && a.timestamp <= endTime
+      );
+      
+      const roughness = segmentAccel.length > 0 ? calculateRoughness(segmentAccel) : 0;
+      
+      result.push({
+        positions: [
+          [points[i].lat, points[i].lng],
+          [points[i + 1].lat, points[i + 1].lng],
+        ],
+        roughness,
+        color: accelPoints.length > 0 ? getRoughnessColor(roughness) : '#374151',
+      });
+    }
+    
+    return result;
+  }, [points, accelPoints]);
+
   if (points.length === 0) {
     return (
       <div className="h-[400px] bg-gray-50 rounded-lg flex items-center justify-center text-gray-400 border border-gray-200">
@@ -60,9 +117,6 @@ export default function RouteMap({ points }: RouteMapProps) {
     [Math.max(...lats) + 0.001, Math.max(...lngs) + 0.001],
   ];
 
-  // Convert points to polyline format
-  const polylinePositions: [number, number][] = points.map((p) => [p.lat, p.lng]);
-
   const startPoint = points[0];
   const endPoint = points[points.length - 1];
 
@@ -72,51 +126,76 @@ export default function RouteMap({ points }: RouteMapProps) {
     return `${mph.toFixed(1)} mph`;
   };
 
+  const hasRoughnessData = accelPoints.length > 0;
+
   return (
-    <div className="h-[400px] rounded-lg overflow-hidden border border-gray-200">
-      <MapContainer
-        bounds={bounds}
-        style={{ height: '100%', width: '100%' }}
-        scrollWheelZoom={true}
-      >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        
-        {/* Route line - charcoal */}
-        <Polyline
-          positions={polylinePositions}
-          color="#374151"
-          weight={3}
-          opacity={0.9}
-        />
+    <div className="space-y-2">
+      <div className="h-[400px] rounded-lg overflow-hidden border border-gray-200">
+        <MapContainer
+          bounds={bounds}
+          style={{ height: '100%', width: '100%' }}
+          scrollWheelZoom={true}
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          
+          {/* Route segments colored by roughness */}
+          {segments.map((segment, idx) => (
+            <Polyline
+              key={idx}
+              positions={segment.positions}
+              color={segment.color}
+              weight={4}
+              opacity={0.9}
+            />
+          ))}
 
-        {/* Start marker */}
-        <Marker position={[startPoint.lat, startPoint.lng]} icon={startIcon}>
-          <Popup>
-            <div className="text-sm">
-              <strong>Start</strong>
-              <br />
-              Speed: {formatSpeed(startPoint.speed)}
-            </div>
-          </Popup>
-        </Marker>
-
-        {/* End marker */}
-        {points.length > 1 && (
-          <Marker position={[endPoint.lat, endPoint.lng]} icon={endIcon}>
+          {/* Start marker */}
+          <Marker position={[startPoint.lat, startPoint.lng]} icon={startIcon}>
             <Popup>
               <div className="text-sm">
-                <strong>End</strong>
+                <strong>Start</strong>
                 <br />
-                Speed: {formatSpeed(endPoint.speed)}
+                Speed: {formatSpeed(startPoint.speed)}
               </div>
             </Popup>
           </Marker>
-        )}
-      </MapContainer>
+
+          {/* End marker */}
+          {points.length > 1 && (
+            <Marker position={[endPoint.lat, endPoint.lng]} icon={endIcon}>
+              <Popup>
+                <div className="text-sm">
+                  <strong>End</strong>
+                  <br />
+                  Speed: {formatSpeed(endPoint.speed)}
+                </div>
+              </Popup>
+            </Marker>
+          )}
+        </MapContainer>
+      </div>
+      
+      {/* Legend */}
+      {hasRoughnessData && (
+        <div className="flex items-center gap-4 text-xs text-gray-500">
+          <span>Road quality:</span>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+            <span>Smooth</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+            <span>Moderate</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-full bg-red-500"></div>
+            <span>Rough</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
