@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
         avgSpeed,
         sampleCount: gpsData.length + accelData.length,
         roughnessScore: roughnessResult?.score ?? null,
-        roughnessBreakdown: roughnessResult?.breakdown ?? null,
+        roughnessBreakdown: roughnessResult?.breakdown ?? undefined,
       },
     });
 
