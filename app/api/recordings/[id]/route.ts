@@ -87,6 +87,61 @@ export async function GET(
   }
 }
 
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const { id } = params;
+    const body = (await request.json()) as {
+      points: { lat: number; lng: number }[];
+    };
+
+    if (!body?.points || !Array.isArray(body.points) || body.points.length === 0) {
+      return NextResponse.json({ error: 'points array required' }, { status: 400 });
+    }
+
+    // Get existing GPS samples in order
+    const samples = await prisma.gpsSample.findMany({
+      where: { driveId: id },
+      orderBy: { timestamp: 'asc' },
+      select: { id: true, timestamp: true },
+    });
+
+    if (samples.length === 0) {
+      return NextResponse.json({ error: 'No GPS samples for drive' }, { status: 404 });
+    }
+
+    if (samples.length !== body.points.length) {
+      return NextResponse.json(
+        { error: `Point count mismatch. Existing ${samples.length}, received ${body.points.length}` },
+        { status: 400 }
+      );
+    }
+
+    // Update each sample with new lat/lng
+    await prisma.$transaction(
+      samples.map((s, idx) =>
+        prisma.gpsSample.update({
+          where: { id: s.id },
+          data: {
+            latitude: body.points[idx].lat,
+            longitude: body.points[idx].lng,
+          },
+        })
+      )
+    );
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Failed to update recording route:', error);
+    return NextResponse.json(
+      { error: 'Failed to update recording route' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }

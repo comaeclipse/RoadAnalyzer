@@ -8,7 +8,7 @@ import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import dynamic from 'next/dynamic';
-import { MapPin, Undo2, ClipboardCheck, Loader2 } from 'lucide-react';
+import { MapPin, Undo2, ClipboardCheck, Loader2, Save } from 'lucide-react';
 
 const RouteEditorMap = dynamic(
   () => import('@/components/recordings/RouteEditorMap').then((m) => ({ default: m.RouteEditorMap })),
@@ -38,6 +38,7 @@ export default function RouteEditPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -91,6 +92,29 @@ export default function RouteEditPage() {
     setEditedPoints(gpsPoints);
   };
 
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      setError(null);
+      const resp = await fetch(`/api/recordings/${params.id}/route`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          points: editedPoints.map((p) => ({ lat: p.lat, lng: p.lng })),
+        }),
+      });
+      if (!resp.ok) {
+        const msg = await resp.json().catch(() => ({}));
+        throw new Error(msg.error || 'Failed to save route');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'Failed to save route');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <PageLayout maxWidth="4xl">
@@ -139,6 +163,10 @@ export default function RouteEditPage() {
               <Button variant="outline" size="sm" onClick={handleReset} className="border-gray-300 text-gray-700 hover:bg-gray-50">
                 <Undo2 className="w-4 h-4 mr-1" />
                 Reset
+              </Button>
+              <Button size="sm" onClick={handleSave} disabled={saving} className="bg-gray-900 hover:bg-gray-800 text-white">
+                <Save className="w-4 h-4 mr-1" />
+                {saving ? 'Saving...' : 'Save to DB'}
               </Button>
               <Button size="sm" onClick={handleCopy} className="bg-gray-900 hover:bg-gray-800 text-white">
                 <ClipboardCheck className="w-4 h-4 mr-1" />
