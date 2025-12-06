@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { StopRecordingRequest } from '@/types/recordings';
 import { analyzeRoughness } from '@/lib/roughness';
+import { runCongestionAnalysis } from '@/lib/post-processing';
 
 export async function POST(request: NextRequest) {
   try {
@@ -68,8 +69,11 @@ export async function POST(request: NextRequest) {
       z: s.z,
       timestamp: Number(s.timestamp),
     }));
-    
+
     const roughnessResult = analyzeRoughness(accelSamples);
+
+    // Run congestion analysis
+    const congestionResult = await runCongestionAnalysis(driveId);
 
     // Update drive with final statistics
     const drive = await prisma.drive.update({

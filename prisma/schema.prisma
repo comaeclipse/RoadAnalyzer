@@ -39,6 +39,7 @@ model Drive {
   // Relations
   accelerometerData AccelerometerSample[]
   gpsData           GpsSample[]
+  congestionEvents  CongestionEvent[]
 
   @@index([createdAt(sort: Desc)])
   @@index([status])
@@ -85,6 +86,160 @@ model GpsSample {
   // Calculated (denormalized)
   distanceFromPrev Float?  // meters from previous point
 
+  // Relations
+  segmentMatches GpsSegmentMatch[]
+
   @@index([driveId, timestamp])
   @@index([timestamp])
+}
+
+// Road Segment: Defines a geographic road section for grouping GPS data
+model RoadSegment {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Segment identification
+  name        String
+  description String?
+
+  // Geometry (GeoJSON LineString)
+  geometry    Json     // { type: "LineString", coordinates: [[lng, lat], ...] }
+
+  // Bounding box for quick spatial filtering
+  minLat      Float
+  maxLat      Float
+  minLon      Float
+  maxLon      Float
+
+  // Metadata
+  roadType    RoadType?
+  source      SegmentSource @default(MANUAL)
+  sourceId    String?      // OSM way ID if imported
+
+  // Relations
+  congestionEvents  CongestionEvent[]
+  segmentStats      SegmentStatistics[]
+  gpsSegmentMatches GpsSegmentMatch[]
+
+  @@index([minLat, maxLat, minLon, maxLon])
+  @@index([name])
+}
+
+enum RoadType {
+  HIGHWAY
+  ARTERIAL
+  COLLECTOR
+  LOCAL
+  RESIDENTIAL
+}
+
+enum SegmentSource {
+  MANUAL
+  OSM_IMPORT
+  AUTO_DETECTED
+}
+
+// Junction table: Links GPS samples to road segments
+model GpsSegmentMatch {
+  id        String   @id @default(cuid())
+
+  gpsId     String
+  gps       GpsSample @relation(fields: [gpsId], references: [id], onDelete: Cascade)
+
+  segmentId String
+  segment   RoadSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  // Distance from GPS point to segment centerline (meters)
+  distance  Float
+
+  // Position along segment (0.0 to 1.0, where 0 is start, 1 is end)
+  position  Float
+
+  @@index([gpsId])
+  @@index([segmentId, gpsId])
+  @@unique([gpsId, segmentId])
+}
+
+// Congestion Event: A detected period of congestion during a drive
+model CongestionEvent {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+
+  // References
+  driveId     String
+  drive       Drive @relation(fields: [driveId], references: [id], onDelete: Cascade)
+
+  segmentId   String
+  segment     RoadSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  // Temporal data
+  startTime   DateTime
+  endTime     DateTime
+  duration    Int          // milliseconds
+
+  // Derived temporal fields for querying
+  dayOfWeek   Int          // 0 (Sunday) to 6 (Saturday)
+  hourOfDay   Int          // 0-23
+  weekOfYear  Int          // ISO week number
+
+  // Congestion metrics
+  severity    CongestionSeverity
+  avgSpeed    Float        // m/s during event
+  minSpeed    Float        // m/s
+  maxSpeed    Float        // m/s
+  distance    Float        // meters traveled during event
+
+  // GPS samples involved (for detailed analysis)
+  startGpsId  String?
+  endGpsId    String?
+
+  @@index([driveId])
+  @@index([segmentId, startTime])
+  @@index([segmentId, dayOfWeek, hourOfDay])
+  @@index([severity])
+}
+
+enum CongestionSeverity {
+  FREE_FLOW
+  SLOW
+  CONGESTED
+  HEAVY
+  GRIDLOCK
+}
+
+// Pre-aggregated statistics for a segment (materialized view pattern)
+model SegmentStatistics {
+  id          String   @id @default(cuid())
+  updatedAt   DateTime @updatedAt
+
+  segmentId   String
+  segment     RoadSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  // Time window (null = all-time aggregate)
+  dayOfWeek   Int?         // 0-6, null for all days
+  hourOfDay   Int?         // 0-23, null for all hours
+  weekStart   DateTime?    // For weekly trends
+
+  // Aggregate metrics
+  sampleCount       Int @default(0)
+  eventCount        Int @default(0)
+  totalDuration     Int @default(0)  // Total congestion time (ms)
+  avgSpeed          Float?
+  avgCongestionSpeed Float?          // Avg speed during congestion only
+
+  // Severity breakdown (% of time in each state)
+  pctFreeFlow   Float @default(0)
+  pctSlow       Float @default(0)
+  pctCongested  Float @default(0)
+  pctHeavy      Float @default(0)
+  pctGridlock   Float @default(0)
+
+  // Congestion score (0-100, where 0 = always congested, 100 = always free-flow)
+  congestionScore Float?
+
+  @@unique([segmentId, dayOfWeek, hourOfDay, weekStart])
+  @@index([segmentId, dayOfWeek])
+  @@index([segmentId, hourOfDay])
+  @@index([segmentId, weekStart])
 }

@@ -6,8 +6,18 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
+import { HeatmapSegment } from '@/types/congestion';
 
 const AllRoutesMap = dynamic(() => import('@/components/map/AllRoutesMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[calc(100vh-12rem)] bg-gray-50 rounded-lg flex items-center justify-center border border-gray-200">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400"></div>
+    </div>
+  ),
+});
+
+const CongestionHeatmap = dynamic(() => import('@/components/map/CongestionHeatmap'), {
   ssr: false,
   loading: () => (
     <div className="h-[calc(100vh-12rem)] bg-gray-50 rounded-lg flex items-center justify-center border border-gray-200">
@@ -26,10 +36,13 @@ interface Route {
 }
 
 export default function MapPage() {
+  const [viewMode, setViewMode] = useState<'quality' | 'congestion'>('quality');
   const [routes, setRoutes] = useState<Route[]>([]);
+  const [segments, setSegments] = useState<HeatmapSegment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchRoutes() {
@@ -47,6 +60,22 @@ export default function MapPage() {
     }
     fetchRoutes();
   }, []);
+
+  useEffect(() => {
+    async function fetchHeatmap() {
+      if (viewMode === 'congestion') {
+        try {
+          const res = await fetch('/api/congestion/heatmap');
+          if (!res.ok) throw new Error('Failed to fetch');
+          const data = await res.json();
+          setSegments(data.heatmap);
+        } catch (err) {
+          console.error('Failed to load heatmap:', err);
+        }
+      }
+    }
+    fetchHeatmap();
+  }, [viewMode]);
 
   const totalDistance = routes.reduce((sum, r) => sum + (r.distance || 0), 0);
   const formatDistance = (meters: number) => {
@@ -72,11 +101,32 @@ export default function MapPage() {
               </p>
             </div>
           </div>
-          <Link href="/recordings">
-            <Button variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-50">
-              View List
-            </Button>
-          </Link>
+          <div className="flex items-center gap-3">
+            {/* View Mode Toggle */}
+            <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+              <Button
+                variant={viewMode === 'quality' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setViewMode('quality')}
+                className={viewMode === 'quality' ? '' : 'text-gray-600 hover:text-gray-900'}
+              >
+                Road Quality
+              </Button>
+              <Button
+                variant={viewMode === 'congestion' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setViewMode('congestion')}
+                className={viewMode === 'congestion' ? '' : 'text-gray-600 hover:text-gray-900'}
+              >
+                Congestion
+              </Button>
+            </div>
+            <Link href="/recordings">
+              <Button variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-50">
+                View List
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {loading && (
@@ -101,17 +151,31 @@ export default function MapPage() {
           </Card>
         )}
 
-        {!loading && !error && routes.length > 0 && (
+        {!loading && !error && (routes.length > 0 || segments.length > 0) && (
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             {/* Map */}
             <div className="lg:col-span-3">
               <Card className="border-gray-200 overflow-hidden">
                 <CardContent className="p-0">
-                  <AllRoutesMap
-                    routes={routes}
-                    selectedRouteId={selectedRouteId}
-                    onRouteSelect={setSelectedRouteId}
-                  />
+                  {viewMode === 'quality' && routes.length > 0 && (
+                    <AllRoutesMap
+                      routes={routes}
+                      selectedRouteId={selectedRouteId}
+                      onRouteSelect={setSelectedRouteId}
+                    />
+                  )}
+                  {viewMode === 'congestion' && segments.length > 0 && (
+                    <CongestionHeatmap
+                      segments={segments}
+                      selectedSegmentId={selectedSegmentId}
+                      onSegmentSelect={setSelectedSegmentId}
+                    />
+                  )}
+                  {viewMode === 'congestion' && segments.length === 0 && (
+                    <div className="h-[calc(100vh-12rem)] flex items-center justify-center text-gray-500">
+                      No congestion data yet. Create road segments and record drives to see congestion patterns.
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -121,33 +185,45 @@ export default function MapPage() {
               {/* Legend */}
               <Card className="border-gray-200">
                 <CardContent className="p-3">
-                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Road Quality</p>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">
+                    {viewMode === 'quality' ? 'Road Quality' : 'Congestion Score'}
+                  </p>
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-1 rounded-full bg-green-500"></div>
-                      <span className="text-xs text-gray-600">90+ Excellent</span>
+                      <span className="text-xs text-gray-600">
+                        {viewMode === 'quality' ? '90+ Excellent' : '80-100 Free Flow'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-1 rounded-full bg-lime-500"></div>
-                      <span className="text-xs text-gray-600">75-89 Good</span>
+                      <span className="text-xs text-gray-600">
+                        {viewMode === 'quality' ? '75-89 Good' : '60-79 Good'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-1 rounded-full bg-yellow-500"></div>
-                      <span className="text-xs text-gray-600">50-74 Fair</span>
+                      <span className="text-xs text-gray-600">
+                        {viewMode === 'quality' ? '50-74 Fair' : '40-59 Moderate'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-1 rounded-full bg-orange-500"></div>
-                      <span className="text-xs text-gray-600">25-49 Poor</span>
+                      <span className="text-xs text-gray-600">
+                        {viewMode === 'quality' ? '25-49 Poor' : '20-39 Heavy'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-1 rounded-full bg-red-500"></div>
-                      <span className="text-xs text-gray-600">0-24 Very Poor</span>
+                      <span className="text-xs text-gray-600">
+                        {viewMode === 'quality' ? '0-24 Very Poor' : '0-19 Gridlock'}
+                      </span>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Route list */}
+              {/* Route/Segment list */}
               <Card className="border-gray-200">
                 <CardContent className="p-3">
                   <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Recordings</p>
