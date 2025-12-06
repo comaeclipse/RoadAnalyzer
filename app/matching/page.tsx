@@ -6,6 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert } from '@/components/ui/alert';
 import * as turf from '@turf/turf';
+import dynamic from 'next/dynamic';
+
+const MatchMap = dynamic(() => import('@/components/matching/MatchMap').then((m) => ({ default: m.MatchMap })), {
+  ssr: false,
+});
 
 interface Segment {
   id: string;
@@ -113,35 +118,50 @@ export default function MatchingPage() {
         )}
 
         {!loading && !error && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {matches.map(({ segment, matches }) => (
               <Card key={segment.id} className="border-gray-200">
-                <CardHeader className="pb-2 flex flex-row items-center justify-between">
-                  <div>
-                    <CardTitle className="text-lg font-medium text-gray-900">
-                      {segment.name || 'Untitled segment'}
-                    </CardTitle>
-                    <p className="text-xs text-gray-500">{segment.id}</p>
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-lg font-medium text-gray-900">
+                        {segment.name || 'Untitled segment'}
+                      </CardTitle>
+                      <p className="text-xs text-gray-500 break-all">{segment.id}</p>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className={`text-xs ${matches.length ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-gray-200 text-gray-600 bg-gray-50'}`}
+                    >
+                      {matches.length ? `${matches.length} recording(s)` : 'No matches'}
+                    </Badge>
                   </div>
-                  <Badge
-                    variant="outline"
-                    className={`text-xs ${matches.length ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-gray-200 text-gray-600 bg-gray-50'}`}
-                  >
-                    {matches.length ? `${matches.length} recording(s)` : 'No matches'}
-                  </Badge>
+                  <p className="text-sm text-gray-500 mt-2">
+                    Showing recordings within {MATCH_THRESHOLD_METERS}m of this segment.
+                  </p>
                 </CardHeader>
                 <CardContent className="pt-2">
                   {matches.length === 0 ? (
                     <p className="text-sm text-gray-500">No recordings within {MATCH_THRESHOLD_METERS}m.</p>
                   ) : (
-                    <ul className="space-y-1">
+                    <div className="grid gap-3 sm:grid-cols-2">
                       {matches.map((m) => (
-                        <li key={m.id} className="text-sm text-gray-800">
-                          <span className="font-medium">{m.name || 'Untitled drive'}</span>{' '}
-                          <span className="text-xs text-gray-500">({m.id})</span>
-                        </li>
+                        <div key={m.id} className="rounded-lg border border-gray-200 p-3 bg-white">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">{m.name || 'Untitled drive'}</p>
+                              <p className="text-xs text-gray-500 break-all">{m.id}</p>
+                            </div>
+                            <Badge variant="outline" className="text-xs border-gray-200 text-gray-600 bg-gray-50">
+                              Match
+                            </Badge>
+                          </div>
+                          <MatchMap
+                            points={routes.find((r) => r.id === m.id)?.points || []}
+                          />
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   )}
                 </CardContent>
               </Card>

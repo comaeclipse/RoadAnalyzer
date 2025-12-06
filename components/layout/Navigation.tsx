@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, History, Map, Route, Settings } from 'lucide-react';
+import { Home, History, Map, Route, Settings, CopyPlus } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: Home },
   { href: '/recordings', label: 'Recordings', icon: History },
   { href: '/map', label: 'Map', icon: Map },
   { href: '/segments', label: 'Segments', icon: Route },
+  { href: '/matching', label: 'Matching', icon: CopyPlus },
   { href: '/calibration', label: 'Calibrate', icon: Settings },
 ];
 
