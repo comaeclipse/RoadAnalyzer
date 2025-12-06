@@ -3,10 +3,10 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { ArrowLeft, MapPin, Gauge, Clock, Activity } from 'lucide-react';
+import { MapPin, Gauge, Clock, Activity } from 'lucide-react';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
+import { PageLayout } from '@/components/layout/PageLayout';
 
 interface RoughnessBreakdown {
   smooth: number;
@@ -139,16 +139,9 @@ export default function RecordingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-white">
-      <div className="max-w-4xl mx-auto p-4 sm:p-6">
-        <div className="flex items-center gap-4 mb-6">
-          <Link href="/">
-            <Button variant="ghost" size="icon" className="text-gray-500 hover:text-gray-900 hover:bg-gray-100">
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-          </Link>
-          <h1 className="text-2xl font-semibold text-gray-900">Recordings</h1>
-        </div>
+    <PageLayout maxWidth="4xl">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900 mb-6">Recordings</h1>
 
         {/* Summary Stats */}
         {!loading && !error && drives.length > 0 && (
@@ -253,6 +246,6 @@ export default function RecordingsPage() {
           ))}
         </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }

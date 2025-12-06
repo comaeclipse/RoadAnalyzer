@@ -74,7 +74,7 @@ export function MapDisplay() {
     return gps.history.map((reading) => [reading.latitude, reading.longitude]);
   }, [gps.history]);
 
-  const defaultCenter: [number, number] = [37.7749, -122.4194]; // San Francisco
+  const defaultCenter: [number, number] = [30.4213, -87.2169]; // Pensacola, FL
 
   if (gps.error) {
     return (

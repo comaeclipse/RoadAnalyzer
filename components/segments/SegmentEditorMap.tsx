@@ -197,10 +197,13 @@ export default function SegmentEditorMap({
     }
   }, [selectedSegmentId, editingPoints, onSegmentUpdated]);
 
+  // Default to Pensacola, FL
+  const PENSACOLA_CENTER: [number, number] = [30.4213, -87.2169];
+  
   // Calculate initial bounds
   const initialCenter: [number, number] = segments.length > 0 && segments[0].geometry.coordinates.length > 0
     ? [segments[0].geometry.coordinates[0][1], segments[0].geometry.coordinates[0][0]]
-    : [37.7749, -122.4194]; // Default to SF
+    : PENSACOLA_CENTER;
 
   return (
     <div className="relative h-full">

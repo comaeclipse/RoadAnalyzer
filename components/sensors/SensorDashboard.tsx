@@ -7,9 +7,8 @@ import { NumericDisplay } from './NumericDisplay';
 import { ChartDisplay } from './ChartDisplay';
 import { MapWrapper } from './MapWrapper';
 import { RecordingControls } from '@/components/recordings/RecordingControls';
-import { Activity, Smartphone, MapPin, History, Map, Settings, Route } from 'lucide-react';
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
+import { Activity, Smartphone, MapPin } from 'lucide-react';
+import { PageLayout } from '@/components/layout/PageLayout';
 
 export function SensorDashboard() {
   const { isEnabled, accelerometer, gps } = useSensorContext();
@@ -18,42 +17,18 @@ export function SensorDashboard() {
   const hasGPSData = gps.data !== null;
 
   return (
-    <div className="min-h-screen bg-white p-4">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <PageLayout>
+      <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold text-gray-900 tracking-tight">Road Analyzer</h1>
-            <p className="text-gray-500 mt-1">
-              Live sensor visualization dashboard
+            <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+            <p className="text-gray-500 text-sm mt-1">
+              Live sensor visualization
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/recordings">
-              <Button variant="outline" size="sm" className="gap-2 border-gray-300 text-gray-700 hover:bg-gray-50">
-                <History className="w-4 h-4" />
-                Recordings
-              </Button>
-            </Link>
-            <Link href="/map">
-              <Button variant="outline" size="sm" className="gap-2 border-gray-300 text-gray-700 hover:bg-gray-50">
-                <Map className="w-4 h-4" />
-                Map
-              </Button>
-            </Link>
-            <Link href="/segments">
-              <Button variant="outline" size="sm" className="gap-2 border-gray-300 text-gray-700 hover:bg-gray-50">
-                <Route className="w-4 h-4" />
-                Segments
-              </Button>
-            </Link>
-            <Link href="/calibration">
-              <Button variant="outline" size="sm" className="gap-2 border-gray-300 text-gray-700 hover:bg-gray-50">
-                <Settings className="w-4 h-4" />
-                Calibrate
-              </Button>
-            </Link>
             <Badge variant="outline" className={`text-sm border-gray-300 ${isEnabled ? 'bg-gray-100 text-gray-900' : 'text-gray-500'}`}>
               <Activity className="w-4 h-4 mr-1" />
               {isEnabled ? 'Active' : 'Inactive'}
@@ -93,6 +68,6 @@ export function SensorDashboard() {
           </TabsContent>
         </Tabs>
       </div>
-    </div>
+    </PageLayout>
   );
 }

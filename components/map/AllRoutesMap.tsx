@@ -74,7 +74,7 @@ export default function AllRoutesMap({ routes, selectedRouteId, onRouteSelect }:
   const initialBounds = useMemo(() => {
     const allPoints = routes.flatMap((r) => r.points);
     if (allPoints.length === 0) {
-      return L.latLngBounds([[37.7749, -122.4194], [37.7749, -122.4194]]); // Default SF
+      return L.latLngBounds([[30.4213, -87.2169], [30.4213, -87.2169]]); // Default Pensacola
     }
     const lats = allPoints.map((p) => p.lat);
     const lngs = allPoints.map((p) => p.lng);
