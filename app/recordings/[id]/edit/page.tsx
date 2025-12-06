@@ -8,7 +8,8 @@ import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import dynamic from 'next/dynamic';
-import { MapPin, Undo2, ClipboardCheck, Loader2, Save } from 'lucide-react';
+import { MapPin, Undo2, ClipboardCheck, Loader2, Save, Move, MousePointer2 } from 'lucide-react';
+import type { EditMode } from '@/components/recordings/RouteEditorMap';
 
 const RouteEditorMap = dynamic(
   () => import('@/components/recordings/RouteEditorMap').then((m) => ({ default: m.RouteEditorMap })),
@@ -39,6 +40,7 @@ export default function RouteEditPage() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editMode, setEditMode] = useState<EditMode>('individual');
 
   useEffect(() => {
     async function load() {
@@ -107,6 +109,8 @@ export default function RouteEditPage() {
         const msg = await resp.json().catch(() => ({}));
         throw new Error(msg.error || 'Failed to save route');
       }
+      // Refresh original points after save
+      setGpsPoints(editedPoints);
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to save route');
@@ -126,7 +130,7 @@ export default function RouteEditPage() {
     );
   }
 
-  if (error || !drive) {
+  if (error && !drive) {
     return (
       <PageLayout maxWidth="4xl">
         <Alert variant="destructive" className="border-red-200 bg-red-50 text-red-700">
@@ -142,41 +146,77 @@ export default function RouteEditPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-gray-900">Edit Route</h1>
-            <p className="text-sm text-gray-500">{drive.name || 'Untitled drive'}</p>
+            <p className="text-sm text-gray-500">{drive?.name || 'Untitled drive'}</p>
           </div>
           <Badge variant="outline" className="border-gray-300 text-gray-700">
             {pointCount} points
           </Badge>
         </div>
 
-        <Alert className="border-gray-200 bg-gray-50 text-gray-700">
-          Drag the markers to adjust the route. Changes are local only; copy the GeoJSON to save/export.
-        </Alert>
+        {error && (
+          <Alert variant="destructive" className="border-red-200 bg-red-50 text-red-700">
+            {error}
+          </Alert>
+        )}
 
         <Card className="border-gray-200">
-          <CardHeader className="pb-2 flex items-center justify-between">
-            <CardTitle className="text-lg font-medium text-gray-900 flex items-center gap-2">
-              <MapPin className="w-4 h-4 text-gray-600" />
-              Route geometry
-            </CardTitle>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={handleReset} className="border-gray-300 text-gray-700 hover:bg-gray-50">
-                <Undo2 className="w-4 h-4 mr-1" />
-                Reset
-              </Button>
-              <Button size="sm" onClick={handleSave} disabled={saving} className="bg-gray-900 hover:bg-gray-800 text-white">
-                <Save className="w-4 h-4 mr-1" />
-                {saving ? 'Saving...' : 'Save to DB'}
-              </Button>
-              <Button size="sm" onClick={handleCopy} className="bg-gray-900 hover:bg-gray-800 text-white">
-                <ClipboardCheck className="w-4 h-4 mr-1" />
-                {copied ? 'Copied' : 'Copy GeoJSON'}
-              </Button>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg font-medium text-gray-900 flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-gray-600" />
+                Route geometry
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                {/* Edit mode toggle */}
+                <div className="flex gap-1 p-1 bg-gray-100 rounded-lg border border-gray-200">
+                  <button
+                    onClick={() => setEditMode('individual')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                      editMode === 'individual'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    <MousePointer2 className="w-3.5 h-3.5" />
+                    Individual
+                  </button>
+                  <button
+                    onClick={() => setEditMode('moveAll')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                      editMode === 'moveAll'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    <Move className="w-3.5 h-3.5" />
+                    Move All
+                  </button>
+                </div>
+
+                <Button variant="outline" size="sm" onClick={handleReset} className="border-gray-300 text-gray-700 hover:bg-gray-50">
+                  <Undo2 className="w-4 h-4 mr-1" />
+                  Reset
+                </Button>
+                <Button size="sm" onClick={handleSave} disabled={saving} className="bg-gray-900 hover:bg-gray-800 text-white">
+                  <Save className="w-4 h-4 mr-1" />
+                  {saving ? 'Saving...' : 'Save'}
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleCopy} className="border-gray-300 text-gray-700 hover:bg-gray-50">
+                  <ClipboardCheck className="w-4 h-4 mr-1" />
+                  {copied ? 'Copied' : 'GeoJSON'}
+                </Button>
+              </div>
             </div>
+            <p className="text-xs text-gray-500 mt-2">
+              {editMode === 'individual'
+                ? 'Drag individual markers to adjust waypoints.'
+                : 'Drag any marker to move the entire route together.'}
+            </p>
           </CardHeader>
           <CardContent>
             <RouteEditorMap
               points={editedPoints.map((p) => ({ lat: p.lat, lng: p.lng }))}
+              editMode={editMode}
               onChange={(pts) =>
                 setEditedPoints(
                   pts.map((p, idx) => ({
@@ -193,4 +233,3 @@ export default function RouteEditPage() {
     </PageLayout>
   );
 }
-
