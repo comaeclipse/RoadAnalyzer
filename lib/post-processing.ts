@@ -123,51 +123,59 @@ async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
       pctGridlock * 0
     ) / 100;
 
-    // Upsert the statistics
-    await prisma.segmentStatistics.upsert({
+    // Find existing statistics record
+    const existing = await prisma.segmentStatistics.findFirst({
       where: {
-        segmentId_dayOfWeek_hourOfDay_weekStart: {
-          segmentId,
-          dayOfWeek: dayOfWeek as number | null,
-          hourOfDay: hourOfDay as number | null,
-          weekStart: weekStart as Date | null,
-        },
-      },
-      create: {
         segmentId,
-        dayOfWeek: dayOfWeek as number | null,
-        hourOfDay: hourOfDay as number | null,
-        weekStart: weekStart as Date | null,
-        sampleCount: 0, // We don't track sample count for now
-        eventCount: stats.eventCount,
-        totalDuration: stats.totalDuration,
-        avgSpeed,
-        avgCongestionSpeed: avgSpeed, // For now, same as avgSpeed
-        pctFreeFlow,
-        pctSlow,
-        pctCongested,
-        pctHeavy,
-        pctGridlock,
-        congestionScore,
-      },
-      update: {
-        eventCount: {
-          increment: stats.eventCount,
-        },
-        totalDuration: {
-          increment: stats.totalDuration,
-        },
-        // Recalculate averages (simplified - in production might want weighted average)
-        avgSpeed,
-        avgCongestionSpeed: avgSpeed,
-        pctFreeFlow,
-        pctSlow,
-        pctCongested,
-        pctHeavy,
-        pctGridlock,
-        congestionScore,
+        dayOfWeek,
+        hourOfDay,
+        weekStart,
       },
     });
+
+    if (existing) {
+      // Update existing record
+      await prisma.segmentStatistics.update({
+        where: { id: existing.id },
+        data: {
+          eventCount: {
+            increment: stats.eventCount,
+          },
+          totalDuration: {
+            increment: stats.totalDuration,
+          },
+          avgSpeed,
+          avgCongestionSpeed: avgSpeed,
+          pctFreeFlow,
+          pctSlow,
+          pctCongested,
+          pctHeavy,
+          pctGridlock,
+          congestionScore,
+        },
+      });
+    } else {
+      // Create new record
+      await prisma.segmentStatistics.create({
+        data: {
+          segmentId,
+          dayOfWeek,
+          hourOfDay,
+          weekStart,
+          sampleCount: 0,
+          eventCount: stats.eventCount,
+          totalDuration: stats.totalDuration,
+          avgSpeed,
+          avgCongestionSpeed: avgSpeed,
+          pctFreeFlow,
+          pctSlow,
+          pctCongested,
+          pctHeavy,
+          pctGridlock,
+          congestionScore,
+        },
+      });
+    }
   }
 }
 
