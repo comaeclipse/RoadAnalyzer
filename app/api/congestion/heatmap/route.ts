@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       heatmap: stats.map(stat => ({
         segmentId: stat.segmentId,
         name: stat.segment.name,
-        geometry: stat.segment.geometry as GeoJSON.LineString,
+        geometry: stat.segment.geometry as unknown as GeoJSON.LineString,
         congestionScore: stat.congestionScore,
         eventCount: stat.eventCount,
         avgSpeed: stat.avgSpeed,

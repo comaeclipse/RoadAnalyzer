@@ -31,7 +31,7 @@ export async function GET(
     return NextResponse.json({
       segment: {
         ...segment,
-        geometry: segment.geometry as GeoJSON.LineString,
+        geometry: segment.geometry as unknown as GeoJSON.LineString,
         eventCount: segment._count.congestionEvents,
         statsCount: segment._count.segmentStats,
         _count: undefined,
@@ -86,7 +86,7 @@ export async function PUT(
     return NextResponse.json({
       segment: {
         ...segment,
-        geometry: segment.geometry as GeoJSON.LineString,
+        geometry: segment.geometry as unknown as GeoJSON.LineString,
       },
     });
   } catch (error: any) {

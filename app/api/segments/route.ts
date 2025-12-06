@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     const response = {
       segments: segments.map(s => ({
         ...s,
-        geometry: s.geometry as GeoJSON.LineString,
+        geometry: s.geometry as unknown as GeoJSON.LineString,
         eventCount: s._count.congestionEvents,
         _count: undefined,
       })),
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       segment: {
         ...segment,
-        geometry: segment.geometry as GeoJSON.LineString,
+        geometry: segment.geometry as unknown as GeoJSON.LineString,
       },
     });
   } catch (error) {
