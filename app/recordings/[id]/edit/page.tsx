@@ -45,7 +45,7 @@ export default function RouteEditPage() {
       try {
         setLoading(true);
         setError(null);
-        const res = await fetch(`/api/recordings/${params.id}/route`);
+        const res = await fetch(`/api/recordings/${params.id}`);
         if (!res.ok) throw new Error('Failed to load route');
         const data = await res.json();
         setDrive(data.drive);
@@ -96,7 +96,7 @@ export default function RouteEditPage() {
     try {
       setSaving(true);
       setError(null);
-      const resp = await fetch(`/api/recordings/${params.id}/route`, {
+      const resp = await fetch(`/api/recordings/${params.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
