@@ -24,8 +24,11 @@ export function RecordingControls() {
   async function handleStart(mode: RecordingMode) {
     setIsProcessing(true);
     try {
+      const modeLabel = mode === 'TRAFFIC' ? 'Traffic' : 'Road Quality';
+      const localName = `${modeLabel} - ${new Date().toLocaleString()}`;
       await startRecording({
         recordingMode: mode,
+        name: localName,
       });
     } catch (error) {
       console.error('Failed to start recording:', error);
