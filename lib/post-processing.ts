@@ -247,7 +247,7 @@ export async function runCongestionAnalysis(
   for (const gps of gpsSamples) {
     const segmentMatches = matchGpsToSegments(
       { latitude: gps.latitude, longitude: gps.longitude },
-      segments as RoadSegmentForMatching[]
+      segments as unknown as RoadSegmentForMatching[]
     );
 
     // Use the closest match (first in sorted array)
