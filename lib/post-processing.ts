@@ -128,16 +128,16 @@ async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
       where: {
         segmentId_dayOfWeek_hourOfDay_weekStart: {
           segmentId,
-          dayOfWeek,
-          hourOfDay,
-          weekStart,
+          dayOfWeek: dayOfWeek as number | null,
+          hourOfDay: hourOfDay as number | null,
+          weekStart: weekStart as Date | null,
         },
       },
       create: {
         segmentId,
-        dayOfWeek,
-        hourOfDay,
-        weekStart,
+        dayOfWeek: dayOfWeek as number | null,
+        hourOfDay: hourOfDay as number | null,
+        weekStart: weekStart as Date | null,
         sampleCount: 0, // We don't track sample count for now
         eventCount: stats.eventCount,
         totalDuration: stats.totalDuration,
