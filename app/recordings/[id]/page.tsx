@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { MapPin, Gauge, Clock, Activity, Trash2 } from 'lucide-react';
+import { MapPin, Gauge, Clock, Activity, Trash2, MapPinPen } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { formatDistanceToNow } from 'date-fns';
 import dynamic from 'next/dynamic';
@@ -206,7 +206,18 @@ export default function RecordingDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {getStatusBadge(drive.status)}
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.push(`/recordings/${drive.id}/edit`)}
+              className="gap-2 border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              <MapPinPen className="h-4 w-4" />
+              Edit Route
+            </Button>
+            {getStatusBadge(drive.status)}
+          </div>
           <Button
             variant="ghost"
             size="icon"
