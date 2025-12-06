@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
-import { ArrowLeft, Plus, Pencil } from 'lucide-react';
-import Link from 'next/link';
+import { Plus, Pencil } from 'lucide-react';
+import { Navigation } from '@/components/layout/Navigation';
 import { SegmentEditorMap } from '@/components/segments/SegmentEditorWrapper';
 import { SegmentForm } from '@/components/segments/SegmentForm';
 import { SegmentList } from '@/components/segments/SegmentList';
@@ -180,19 +180,11 @@ export default function SegmentsPage() {
 
   return (
     <div className="h-screen flex flex-col bg-white">
-      {/* Header */}
-      <header className="border-b border-gray-200 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/">
-            <Button variant="ghost" size="icon" className="text-gray-500 hover:text-gray-900 hover:bg-gray-100">
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">Segment Editor</h1>
-            <p className="text-sm text-gray-500">{segments.length} segments</p>
-          </div>
-        </div>
+      <Navigation />
+      
+      {/* Sub-header for segment actions */}
+      <div className="border-b border-gray-200 px-4 py-2 flex items-center justify-between bg-gray-50">
+        <p className="text-sm text-gray-600">{segments.length} segments</p>
         <div className="flex items-center gap-2">
           {editMode === 'view' && (
             <>
@@ -228,7 +220,7 @@ export default function SegmentsPage() {
             </Button>
           )}
         </div>
-      </header>
+      </div>
 
       {/* Success/Error Messages */}
       {(error || successMessage) && (
