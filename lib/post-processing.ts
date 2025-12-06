@@ -98,7 +98,7 @@ async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
   }
 
   // Upsert statistics
-  for (const agg of aggregates.values()) {
+  for (const agg of Array.from(aggregates.values())) {
     const { segmentId, dayOfWeek, hourOfDay, weekStart, stats } = agg;
 
     // Calculate aggregate metrics

@@ -179,7 +179,7 @@ export function detectCongestion(
   }
 
   // Process each segment
-  for (const [segmentId, samples] of bySegment.entries()) {
+  for (const [segmentId, samples] of Array.from(bySegment.entries())) {
     // Sort by timestamp
     const sorted = samples.sort((a, b) => {
       const aTime = Number(a.timestamp);
