@@ -3,6 +3,9 @@ import { AccelerometerData, GPSData } from './sensors';
 // Drive status enum
 export type DriveStatus = 'RECORDING' | 'COMPLETED' | 'FAILED';
 
+// Recording mode - what type of analysis to perform
+export type RecordingMode = 'ROAD_QUALITY' | 'TRAFFIC';
+
 // Drive type (matches Prisma schema but without Prisma dependency)
 export interface Drive {
   id: string;
@@ -11,6 +14,7 @@ export interface Drive {
   startTime: Date | string;
   endTime: Date | string | null;
   status: DriveStatus;
+  recordingMode: RecordingMode;
   name: string | null;
   description: string | null;
   tags: string[];
@@ -25,12 +29,14 @@ export interface DriveMetadata {
   name?: string;
   description?: string;
   tags?: string[];
+  recordingMode?: RecordingMode;
 }
 
 export interface StartRecordingRequest {
   name?: string;
   description?: string;
   tags?: string[];
+  recordingMode: RecordingMode;
 }
 
 export interface StartRecordingResponse {
@@ -59,7 +65,8 @@ export interface SensorDataResponse {
 export interface RecordingContextType {
   isRecording: boolean;
   currentDriveId: string | null;
-  startRecording: (metadata?: DriveMetadata) => Promise<void>;
+  currentRecordingMode: RecordingMode | null;
+  startRecording: (metadata: DriveMetadata & { recordingMode: RecordingMode }) => Promise<void>;
   stopRecording: () => Promise<Drive>;
   recordingError: string | null;
   bufferStatus: {

@@ -5,13 +5,18 @@ import { StartRecordingRequest } from '@/types/recordings';
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as StartRecordingRequest;
-    const { name, description, tags } = body;
+    const { name, description, tags, recordingMode } = body;
+
+    // Generate appropriate default name based on mode
+    const modeLabel = recordingMode === 'TRAFFIC' ? 'Traffic' : 'Road Quality';
+    const defaultName = `${modeLabel} - ${new Date().toLocaleString()}`;
 
     const drive = await prisma.drive.create({
       data: {
         startTime: new Date(),
         status: 'RECORDING',
-        name: name || `Drive ${new Date().toLocaleString()}`,
+        recordingMode: recordingMode || 'ROAD_QUALITY',
+        name: name || defaultName,
         description: description || null,
         tags: tags || [],
       },

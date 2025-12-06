@@ -5,10 +5,12 @@ import { useRecordingContext } from '@/components/providers/RecordingProvider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert } from '@/components/ui/alert';
+import { RecordingMode } from '@/types/recordings';
 
 export function RecordingControls() {
   const {
     isRecording,
+    currentRecordingMode,
     startRecording,
     stopRecording,
     bufferStatus,
@@ -18,11 +20,11 @@ export function RecordingControls() {
 
   const [isProcessing, setIsProcessing] = useState(false);
 
-  async function handleStart() {
+  async function handleStart(mode: RecordingMode) {
     setIsProcessing(true);
     try {
       await startRecording({
-        name: `Drive ${new Date().toLocaleString()}`,
+        recordingMode: mode,
       });
     } catch (error) {
       console.error('Failed to start recording:', error);
@@ -56,31 +58,55 @@ export function RecordingControls() {
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
   }
 
+  const modeLabel = currentRecordingMode === 'TRAFFIC' ? 'Traffic' : 'Road Quality';
+  const modeColor = currentRecordingMode === 'TRAFFIC' ? 'bg-amber-500' : 'bg-emerald-500';
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-4 flex-wrap">
+      <div className="flex flex-col gap-2">
         {!isRecording ? (
-          <Button
-            size="lg"
-            onClick={handleStart}
-            disabled={isProcessing}
-            className="bg-gray-900 hover:bg-gray-800 text-white font-medium"
-          >
-            <div className="w-3 h-3 mr-2 rounded-full bg-red-500" />
-            Start Recording
-          </Button>
-        ) : (
-          <>
+          <div className="flex gap-2">
             <Button
               size="lg"
-              onClick={handleStop}
+              onClick={() => handleStart('ROAD_QUALITY')}
               disabled={isProcessing}
-              variant="outline"
-              className="font-medium border-gray-300 text-gray-900 hover:bg-gray-50"
+              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
             >
-              <div className="w-3 h-3 mr-2 bg-gray-900" />
-              Stop Recording
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              Road Quality
             </Button>
+            <Button
+              size="lg"
+              onClick={() => handleStart('TRAFFIC')}
+              disabled={isProcessing}
+              className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-medium"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+              Traffic
+            </Button>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-3">
+              <Button
+                size="lg"
+                onClick={handleStop}
+                disabled={isProcessing}
+                variant="outline"
+                className="font-medium border-gray-300 text-gray-900 hover:bg-gray-50"
+              >
+                <div className="w-3 h-3 mr-2 bg-gray-900" />
+                Stop Recording
+              </Button>
+
+              <Badge className={`${modeColor} text-white border-0`}>
+                {modeLabel}
+              </Badge>
+            </div>
 
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-sm font-mono border-gray-300 bg-gray-50">
@@ -100,7 +126,7 @@ export function RecordingControls() {
               )}
 
               <div className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <div className={`w-2 h-2 rounded-full ${modeColor} animate-pulse`} />
                 <span className="text-sm text-gray-500">Recording</span>
               </div>
             </div>

@@ -19,6 +19,7 @@ model Drive {
   startTime   DateTime
   endTime     DateTime?
   status      DriveStatus @default(RECORDING)
+  recordingMode RecordingMode @default(ROAD_QUALITY)
 
   // User-defined metadata
   name        String?
@@ -49,6 +50,11 @@ enum DriveStatus {
   RECORDING
   COMPLETED
   FAILED
+}
+
+enum RecordingMode {
+  ROAD_QUALITY    // Analyze road surface conditions using accelerometer
+  TRAFFIC         // Analyze traffic/congestion patterns using GPS speed
 }
 
 model AccelerometerSample {

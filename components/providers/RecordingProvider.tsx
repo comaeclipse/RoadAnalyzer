@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
 import { useSensorContext } from './SensorProvider';
-import { RecordingContextType, DriveMetadata, Drive } from '@/types/recordings';
+import { RecordingContextType, DriveMetadata, Drive, RecordingMode } from '@/types/recordings';
 import { AccelerometerData, GPSData } from '@/types/sensors';
 
 const RecordingContext = createContext<RecordingContextType | undefined>(undefined);
@@ -17,6 +17,7 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
 
   const [isRecording, setIsRecording] = useState(false);
   const [currentDriveId, setCurrentDriveId] = useState<string | null>(null);
+  const [currentRecordingMode, setCurrentRecordingMode] = useState<RecordingMode | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
@@ -244,14 +245,14 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentDriveId, recordingError]);
 
-  const startRecording = useCallback(async (metadata?: DriveMetadata) => {
+  const startRecording = useCallback(async (metadata: DriveMetadata & { recordingMode: RecordingMode }) => {
     try {
       setRecordingError(null);
 
       const response = await fetch('/api/recordings/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(metadata || {}),
+        body: JSON.stringify(metadata),
       });
 
       if (!response.ok) {
@@ -260,12 +261,14 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
 
       const { driveId } = await response.json();
       setCurrentDriveId(driveId);
+      setCurrentRecordingMode(metadata.recordingMode);
       setIsRecording(true);
       setRecordingStartTime(Date.now());
       setRecordingDuration(0);
 
       // Store in localStorage for recovery
       localStorage.setItem('activeRecording', driveId);
+      localStorage.setItem('activeRecordingMode', metadata.recordingMode);
     } catch (error) {
       console.error('Start recording error:', error);
       setRecordingError('Failed to start recording');
@@ -301,6 +304,7 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
       // Reset state
       setIsRecording(false);
       setCurrentDriveId(null);
+      setCurrentRecordingMode(null);
       setRecordingStartTime(null);
       setRecordingDuration(0);
       accelerometerBuffer.current = [];
@@ -309,6 +313,7 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
 
       // Clear localStorage
       localStorage.removeItem('activeRecording');
+      localStorage.removeItem('activeRecordingMode');
 
       return drive;
     } catch (error) {
@@ -321,6 +326,7 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
   const value: RecordingContextType = {
     isRecording,
     currentDriveId,
+    currentRecordingMode,
     startRecording,
     stopRecording,
     recordingError,
