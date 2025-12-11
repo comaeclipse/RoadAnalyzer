@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, CircleMarker } from 'react-leaflet';
 import L from 'leaflet';
+import { getSpeedColor } from '@/lib/speed';
 
 interface GpsPoint {
   lat: number;
@@ -22,6 +23,7 @@ interface AccelPoint {
 interface RouteMapProps {
   points: GpsPoint[];
   accelPoints?: AccelPoint[];
+  mode?: 'ROAD_QUALITY' | 'TRAFFIC';
 }
 
 // Calculate roughness for a set of accel points
@@ -70,36 +72,44 @@ const endIcon = new L.DivIcon({
   iconAnchor: [7, 7],
 });
 
-export default function RouteMap({ points, accelPoints = [] }: RouteMapProps) {
-  // Calculate roughness for each GPS segment
+export default function RouteMap({ points, accelPoints = [], mode = 'ROAD_QUALITY' }: RouteMapProps) {
+  // Calculate color for each GPS segment based on mode
   const segments = useMemo(() => {
     if (points.length < 2) return [];
-    
-    const result: { positions: [number, number][]; roughness: number; color: string }[] = [];
-    
+
+    const result: { positions: [number, number][]; color: string }[] = [];
+
     for (let i = 0; i < points.length - 1; i++) {
-      const startTime = points[i].timestamp;
-      const endTime = points[i + 1].timestamp;
-      
-      // Find accel points in this time range
-      const segmentAccel = accelPoints.filter(
-        (a) => a.timestamp >= startTime && a.timestamp <= endTime
-      );
-      
-      const roughness = segmentAccel.length > 0 ? calculateRoughness(segmentAccel) : 0;
-      
+      let color: string;
+
+      if (mode === 'TRAFFIC') {
+        // Use GPS speed for traffic mode
+        color = getSpeedColor(points[i].speed);
+      } else {
+        // Use accelerometer roughness for road quality mode
+        const startTime = points[i].timestamp;
+        const endTime = points[i + 1].timestamp;
+
+        // Find accel points in this time range
+        const segmentAccel = accelPoints.filter(
+          (a) => a.timestamp >= startTime && a.timestamp <= endTime
+        );
+
+        const roughness = segmentAccel.length > 0 ? calculateRoughness(segmentAccel) : 0;
+        color = accelPoints.length > 0 ? getRoughnessColor(roughness) : '#374151';
+      }
+
       result.push({
         positions: [
           [points[i].lat, points[i].lng],
           [points[i + 1].lat, points[i + 1].lng],
         ],
-        roughness,
-        color: accelPoints.length > 0 ? getRoughnessColor(roughness) : '#374151',
+        color,
       });
     }
-    
+
     return result;
-  }, [points, accelPoints]);
+  }, [points, accelPoints, mode]);
 
   if (points.length === 0) {
     return (
@@ -141,7 +151,7 @@ export default function RouteMap({ points, accelPoints = [] }: RouteMapProps) {
           url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
         />
           
-          {/* Route segments colored by roughness */}
+          {/* Route segments colored by speed or roughness */}
           {segments.map((segment, idx) => (
             <Polyline
               key={idx}
@@ -178,8 +188,24 @@ export default function RouteMap({ points, accelPoints = [] }: RouteMapProps) {
         </MapContainer>
       </div>
       
-      {/* Legend */}
-      {hasRoughnessData && (
+      {/* Legend - conditional based on mode */}
+      {mode === 'TRAFFIC' ? (
+        <div className="flex items-center gap-4 text-xs text-gray-500">
+          <span>Speed:</span>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-full bg-red-500"></div>
+            <span>Stopped</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+            <span>Slow</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+            <span>Normal+</span>
+          </div>
+        </div>
+      ) : hasRoughnessData && (
         <div className="flex items-center gap-4 text-xs text-gray-500">
           <span>Road quality:</span>
           <div className="flex items-center gap-1">

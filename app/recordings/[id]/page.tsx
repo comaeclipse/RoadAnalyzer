@@ -436,76 +436,51 @@ export default function RecordingDetailPage() {
             </Card>
           )}
 
-          {/* Stops & Slow Zones (works without segments) */}
+          {/* Stops & Slow Zones Summary - Compact Version */}
           {(stops.length > 0 || slowZones.length > 0) && (
             <Card className="mb-6 bg-purple-50 border-purple-200">
               <CardHeader className="pb-2">
-                <CardTitle className="text-lg font-medium text-gray-900">Stops & Slow Zones</CardTitle>
+                <CardTitle className="text-lg font-medium text-gray-900">
+                  Stops & Slow Zones Summary
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <div className="grid grid-cols-3 gap-3">
+                  {/* Total Stops */}
                   <div className="text-center p-3 bg-red-50 rounded-lg border border-red-200">
                     <div className="text-3xl font-bold text-red-600">{stops.length}</div>
-                    <div className="text-sm text-gray-600">Stops (≥5s)</div>
+                    <div className="text-sm text-gray-600">Stops</div>
                     <div className="text-xs text-gray-500 mt-1">
-                      Total: {formatDuration(stops.reduce((sum, s) => sum + s.duration, 0))}
+                      {formatDuration(stops.reduce((sum, s) => sum + s.duration, 0))}
                     </div>
                   </div>
+
+                  {/* Total Slow Zones */}
                   <div className="text-center p-3 bg-yellow-50 rounded-lg border border-yellow-200">
                     <div className="text-3xl font-bold text-yellow-600">{slowZones.length}</div>
-                    <div className="text-sm text-gray-600">Slow Zones (&lt;10 mph)</div>
+                    <div className="text-sm text-gray-600">Slow Zones</div>
                     <div className="text-xs text-gray-500 mt-1">
-                      Total: {formatDuration(slowZones.reduce((sum, s) => sum + s.duration, 0))}
+                      {formatDuration(slowZones.reduce((sum, s) => sum + s.duration, 0))}
                     </div>
                   </div>
-                </div>
 
-                <div className="space-y-2">
-                  {stops.slice(0, 5).map((stop, idx) => (
-                    <div key={`stop-${idx}`} className="p-2 bg-red-50 rounded border border-red-200 text-sm">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300">
-                            Stop {idx + 1}
-                          </Badge>
-                          <span className="text-gray-600">
-                            {formatDuration(stop.duration)}
-                          </span>
-                        </div>
-                        <span className="text-xs text-gray-500">
-                          {stop.location.lat.toFixed(5)}, {stop.location.lng.toFixed(5)}
-                        </span>
-                      </div>
+                  {/* Combined Time & Percentage */}
+                  <div className="text-center p-3 bg-purple-100 rounded-lg border border-purple-300">
+                    <div className="text-3xl font-bold text-purple-600">
+                      {formatDuration(
+                        stops.reduce((sum, s) => sum + s.duration, 0) +
+                        slowZones.reduce((sum, s) => sum + s.duration, 0)
+                      )}
                     </div>
-                  ))}
-                  {stops.length > 5 && (
-                    <p className="text-xs text-gray-500 text-center">
-                      ... and {stops.length - 5} more stops
-                    </p>
-                  )}
-
-                  {slowZones.slice(0, 3).map((zone, idx) => (
-                    <div key={`slow-${idx}`} className="p-2 bg-yellow-50 rounded border border-yellow-200 text-sm">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="bg-yellow-100 text-yellow-700 border-yellow-300">
-                            Slow {idx + 1}
-                          </Badge>
-                          <span className="text-gray-600">
-                            {formatDuration(zone.duration)} @ {formatSpeed(zone.avgSpeed)}
-                          </span>
-                        </div>
-                        <span className="text-xs text-gray-500">
-                          {zone.location.lat.toFixed(5)}, {zone.location.lng.toFixed(5)}
-                        </span>
-                      </div>
+                    <div className="text-sm text-gray-600">Total Time</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {Math.round(
+                        (stops.reduce((sum, s) => sum + s.duration, 0) +
+                         slowZones.reduce((sum, s) => sum + s.duration, 0)) /
+                        (drive.duration || 1) * 100
+                      )}% of trip
                     </div>
-                  ))}
-                  {slowZones.length > 3 && (
-                    <p className="text-xs text-gray-500 text-center">
-                      ... and {slowZones.length - 3} more slow zones
-                    </p>
-                  )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -623,7 +598,7 @@ export default function RecordingDetailPage() {
         </CardHeader>
         <CardContent>
           {gpsPoints.length > 0 ? (
-            <RouteMap points={gpsPoints} accelPoints={accelPoints} />
+            <RouteMap points={gpsPoints} accelPoints={accelPoints} mode={drive.recordingMode} />
           ) : (
             <div className="h-[400px] bg-gray-50 rounded-lg flex items-center justify-center text-gray-400 border border-gray-200">
               No GPS data available for this drive
