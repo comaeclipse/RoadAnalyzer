@@ -16,6 +16,7 @@ export async function GET(
         id: true,
         name: true,
         status: true,
+        recordingMode: true,
         startTime: true,
         endTime: true,
         duration: true,
@@ -36,8 +37,8 @@ export async function GET(
       );
     }
 
-    // Fetch GPS and accelerometer data in parallel
-    const [gpsData, accelData] = await Promise.all([
+    // Fetch GPS, accelerometer, and congestion data in parallel
+    const [gpsData, accelData, congestionEvents] = await Promise.all([
       prisma.gpsSample.findMany({
         where: { driveId: id },
         orderBy: { timestamp: 'asc' },
@@ -59,6 +60,19 @@ export async function GET(
           timestamp: true,
         },
       }),
+      prisma.congestionEvent.findMany({
+        where: { driveId: id },
+        orderBy: { startTime: 'asc' },
+        include: {
+          segment: {
+            select: {
+              id: true,
+              name: true,
+              geometry: true,
+            },
+          },
+        },
+      }),
     ]);
 
     // Convert BigInt timestamps to numbers for JSON serialization
@@ -77,7 +91,7 @@ export async function GET(
       timestamp: Number(point.timestamp),
     }));
 
-    return NextResponse.json({ drive, gpsPoints, accelPoints });
+    return NextResponse.json({ drive, gpsPoints, accelPoints, congestionEvents });
   } catch (error) {
     console.error('Failed to fetch recording:', error);
     return NextResponse.json(

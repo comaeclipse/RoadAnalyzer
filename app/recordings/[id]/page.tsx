@@ -34,6 +34,7 @@ interface Drive {
   id: string;
   name: string | null;
   status: 'RECORDING' | 'COMPLETED' | 'FAILED';
+  recordingMode: 'ROAD_QUALITY' | 'TRAFFIC';
   startTime: string;
   endTime: string | null;
   duration: number | null;
@@ -44,6 +45,23 @@ interface Drive {
   createdAt: string;
   roughnessScore: number | null;
   roughnessBreakdown: RoughnessBreakdown | null;
+}
+
+interface CongestionEvent {
+  id: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  severity: 'FREE_FLOW' | 'SLOW' | 'CONGESTED' | 'HEAVY' | 'GRIDLOCK';
+  avgSpeed: number;
+  minSpeed: number;
+  maxSpeed: number;
+  distance: number;
+  segment: {
+    id: string;
+    name: string;
+    geometry: any;
+  };
 }
 
 interface GpsPoint {
@@ -85,12 +103,46 @@ function getRoughnessBgColor(score: number): string {
   return 'bg-red-50 border-red-200';
 }
 
+function getSeverityLabel(severity: string): string {
+  switch (severity) {
+    case 'FREE_FLOW': return 'Free Flow';
+    case 'SLOW': return 'Slow';
+    case 'CONGESTED': return 'Congested';
+    case 'HEAVY': return 'Heavy';
+    case 'GRIDLOCK': return 'Gridlock';
+    default: return severity;
+  }
+}
+
+function getSeverityColor(severity: string): string {
+  switch (severity) {
+    case 'FREE_FLOW': return 'text-green-600';
+    case 'SLOW': return 'text-yellow-600';
+    case 'CONGESTED': return 'text-orange-600';
+    case 'HEAVY': return 'text-red-600';
+    case 'GRIDLOCK': return 'text-red-900';
+    default: return 'text-gray-600';
+  }
+}
+
+function getSeverityBgColor(severity: string): string {
+  switch (severity) {
+    case 'FREE_FLOW': return 'bg-green-50 border-green-200';
+    case 'SLOW': return 'bg-yellow-50 border-yellow-200';
+    case 'CONGESTED': return 'bg-orange-50 border-orange-200';
+    case 'HEAVY': return 'bg-red-50 border-red-200';
+    case 'GRIDLOCK': return 'bg-red-100 border-red-300';
+    default: return 'bg-gray-50 border-gray-200';
+  }
+}
+
 export default function RecordingDetailPage() {
   const params = useParams();
   const router = useRouter();
   const [drive, setDrive] = useState<Drive | null>(null);
   const [gpsPoints, setGpsPoints] = useState<GpsPoint[]>([]);
   const [accelPoints, setAccelPoints] = useState<AccelPoint[]>([]);
+  const [congestionEvents, setCongestionEvents] = useState<CongestionEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -121,6 +173,7 @@ export default function RecordingDetailPage() {
         setDrive(data.drive);
         setGpsPoints(data.gpsPoints);
         setAccelPoints(data.accelPoints || []);
+        setCongestionEvents(data.congestionEvents || []);
       } catch (err) {
         setError('Failed to load recording');
         console.error(err);
@@ -152,6 +205,104 @@ export default function RecordingDetailPage() {
     const mph = mps * 2.237;
     return `${mph.toFixed(1)} mph`;
   };
+
+  // Detect stops and slow zones from GPS data
+  const detectStopsAndSlowZones = () => {
+    const stops: Array<{ start: number; end: number; duration: number; location: GpsPoint }> = [];
+    const slowZones: Array<{ start: number; end: number; duration: number; avgSpeed: number; location: GpsPoint }> = [];
+
+    let stopStart: number | null = null;
+    let slowStart: number | null = null;
+    let slowSpeeds: number[] = [];
+
+    const STOP_THRESHOLD = 0.5; // m/s (~1.1 mph)
+    const SLOW_THRESHOLD = 4.5; // m/s (~10 mph)
+    const MIN_DURATION = 5000; // 5 seconds minimum
+
+    for (let i = 0; i < gpsPoints.length; i++) {
+      const point = gpsPoints[i];
+      const speed = point.speed || 0;
+
+      // Detect stops
+      if (speed < STOP_THRESHOLD) {
+        if (stopStart === null) {
+          stopStart = i;
+        }
+      } else {
+        if (stopStart !== null) {
+          const duration = point.timestamp - gpsPoints[stopStart].timestamp;
+          if (duration >= MIN_DURATION) {
+            stops.push({
+              start: stopStart,
+              end: i - 1,
+              duration,
+              location: gpsPoints[stopStart],
+            });
+          }
+          stopStart = null;
+        }
+      }
+
+      // Detect slow zones (moving but slow)
+      if (speed >= STOP_THRESHOLD && speed < SLOW_THRESHOLD) {
+        if (slowStart === null) {
+          slowStart = i;
+          slowSpeeds = [speed];
+        } else {
+          slowSpeeds.push(speed);
+        }
+      } else {
+        if (slowStart !== null) {
+          const duration = point.timestamp - gpsPoints[slowStart].timestamp;
+          if (duration >= MIN_DURATION) {
+            const avgSpeed = slowSpeeds.reduce((a, b) => a + b, 0) / slowSpeeds.length;
+            slowZones.push({
+              start: slowStart,
+              end: i - 1,
+              duration,
+              avgSpeed,
+              location: gpsPoints[slowStart],
+            });
+          }
+          slowStart = null;
+          slowSpeeds = [];
+        }
+      }
+    }
+
+    // Handle ongoing stop/slow at end
+    if (stopStart !== null) {
+      const lastPoint = gpsPoints[gpsPoints.length - 1];
+      const duration = lastPoint.timestamp - gpsPoints[stopStart].timestamp;
+      if (duration >= MIN_DURATION) {
+        stops.push({
+          start: stopStart,
+          end: gpsPoints.length - 1,
+          duration,
+          location: gpsPoints[stopStart],
+        });
+      }
+    }
+
+    if (slowStart !== null) {
+      const lastPoint = gpsPoints[gpsPoints.length - 1];
+      const duration = lastPoint.timestamp - gpsPoints[slowStart].timestamp;
+      if (duration >= MIN_DURATION) {
+        const avgSpeed = slowSpeeds.reduce((a, b) => a + b, 0) / slowSpeeds.length;
+        slowZones.push({
+          start: slowStart,
+          end: gpsPoints.length - 1,
+          duration,
+          avgSpeed,
+          location: gpsPoints[slowStart],
+        });
+      }
+    }
+
+    return { stops, slowZones };
+  };
+
+  const { stops, slowZones } = gpsPoints.length > 0 ? detectStopsAndSlowZones() : { stops: [], slowZones: [] };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -230,8 +381,140 @@ export default function RecordingDetailPage() {
         </div>
       </div>
 
+      {/* Traffic Analysis Summary */}
+      {drive.recordingMode === 'TRAFFIC' && (
+        <>
+          {congestionEvents.length > 0 ? (
+            <Card className="mb-6 bg-blue-50 border-blue-200">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600 mb-1">Traffic Analysis</p>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-4xl font-bold text-blue-600">
+                        {congestionEvents.length}
+                      </span>
+                      <span className="text-lg text-blue-600">
+                        Congestion Event{congestionEvents.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 text-xs">
+                    {['GRIDLOCK', 'HEAVY', 'CONGESTED', 'SLOW', 'FREE_FLOW'].map((severity) => {
+                      const count = congestionEvents.filter(e => e.severity === severity).length;
+                      if (count === 0) return null;
+                      return (
+                        <div key={severity} className="text-center">
+                          <div className={`px-2 py-1 rounded ${getSeverityBgColor(severity)}`}>
+                            <div className={`font-bold ${getSeverityColor(severity)}`}>{count}</div>
+                          </div>
+                          <span className="text-gray-500 mt-1 block">{getSeverityLabel(severity)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="mb-6 bg-amber-50 border-amber-200">
+              <CardContent className="p-4">
+                <p className="text-sm text-gray-700 mb-2">
+                  <strong>No traffic analysis available.</strong>
+                </p>
+                <p className="text-sm text-gray-600">
+                  Traffic analysis requires road segments to be defined. Visit the{' '}
+                  <button
+                    onClick={() => router.push('/segments')}
+                    className="text-blue-600 hover:underline font-medium"
+                  >
+                    Segments page
+                  </button>
+                  {' '}to create road segments, then record a new traffic session.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Stops & Slow Zones (works without segments) */}
+          {(stops.length > 0 || slowZones.length > 0) && (
+            <Card className="mb-6 bg-purple-50 border-purple-200">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg font-medium text-gray-900">Stops & Slow Zones</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  <div className="text-center p-3 bg-red-50 rounded-lg border border-red-200">
+                    <div className="text-3xl font-bold text-red-600">{stops.length}</div>
+                    <div className="text-sm text-gray-600">Stops (≥5s)</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Total: {formatDuration(stops.reduce((sum, s) => sum + s.duration, 0))}
+                    </div>
+                  </div>
+                  <div className="text-center p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                    <div className="text-3xl font-bold text-yellow-600">{slowZones.length}</div>
+                    <div className="text-sm text-gray-600">Slow Zones (&lt;10 mph)</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Total: {formatDuration(slowZones.reduce((sum, s) => sum + s.duration, 0))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {stops.slice(0, 5).map((stop, idx) => (
+                    <div key={`stop-${idx}`} className="p-2 bg-red-50 rounded border border-red-200 text-sm">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300">
+                            Stop {idx + 1}
+                          </Badge>
+                          <span className="text-gray-600">
+                            {formatDuration(stop.duration)}
+                          </span>
+                        </div>
+                        <span className="text-xs text-gray-500">
+                          {stop.location.lat.toFixed(5)}, {stop.location.lng.toFixed(5)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {stops.length > 5 && (
+                    <p className="text-xs text-gray-500 text-center">
+                      ... and {stops.length - 5} more stops
+                    </p>
+                  )}
+
+                  {slowZones.slice(0, 3).map((zone, idx) => (
+                    <div key={`slow-${idx}`} className="p-2 bg-yellow-50 rounded border border-yellow-200 text-sm">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="bg-yellow-100 text-yellow-700 border-yellow-300">
+                            Slow {idx + 1}
+                          </Badge>
+                          <span className="text-gray-600">
+                            {formatDuration(zone.duration)} @ {formatSpeed(zone.avgSpeed)}
+                          </span>
+                        </div>
+                        <span className="text-xs text-gray-500">
+                          {zone.location.lat.toFixed(5)}, {zone.location.lng.toFixed(5)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {slowZones.length > 3 && (
+                    <p className="text-xs text-gray-500 text-center">
+                      ... and {slowZones.length - 3} more slow zones
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+
       {/* Road Quality Score */}
-      {drive.roughnessScore !== null && (
+      {drive.recordingMode === 'ROAD_QUALITY' && drive.roughnessScore !== null && (
         <Card className={`mb-6 ${getRoughnessBgColor(drive.roughnessScore)}`}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
@@ -349,18 +632,66 @@ export default function RecordingDetailPage() {
         </CardContent>
       </Card>
 
+      {/* Traffic Events Details */}
+      {drive.recordingMode === 'TRAFFIC' && congestionEvents.length > 0 && (
+        <Card className="border-gray-200 mb-6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg font-medium text-gray-900">Congestion Events</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {congestionEvents.map((event, idx) => (
+                <div key={event.id} className={`p-3 rounded-lg border ${getSeverityBgColor(event.severity)}`}>
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-medium text-gray-900">Event {idx + 1}</span>
+                        <Badge variant="outline" className={`${getSeverityColor(event.severity)} border-current`}>
+                          {getSeverityLabel(event.severity)}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-gray-600 mb-2">{event.segment.name}</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                        <div>
+                          <span className="text-gray-500">Duration:</span>
+                          <span className="ml-1 font-medium">{formatDuration(event.duration)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Distance:</span>
+                          <span className="ml-1 font-medium">{formatDistance(event.distance)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Avg Speed:</span>
+                          <span className="ml-1 font-medium">{formatSpeed(event.avgSpeed)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Min Speed:</span>
+                          <span className="ml-1 font-medium">{formatSpeed(event.minSpeed)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Road Roughness Timeline */}
-      <Card className="border-gray-200">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg font-medium text-gray-900">Roughness Over Time</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <SensorTimeline
-            accelPoints={accelPoints}
-            startTime={startTime}
-          />
-        </CardContent>
-      </Card>
+      {drive.recordingMode === 'ROAD_QUALITY' && (
+        <Card className="border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg font-medium text-gray-900">Roughness Over Time</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SensorTimeline
+              accelPoints={accelPoints}
+              startTime={startTime}
+            />
+          </CardContent>
+        </Card>
+      )}
     </PageLayout>
   );
 }
