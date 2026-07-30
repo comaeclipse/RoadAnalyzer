@@ -4,6 +4,12 @@ A mobile-first Next.js application for analyzing road conditions and traffic pat
 
 ## Features
 
+### Native iPhone Traffic Recorder
+
+The browser dashboard is now the public congestion viewer. A native SwiftUI recorder lives in [`RoadAnalyzerIOS`](RoadAnalyzerIOS) and captures manually started drives with background GPS, heading, motion diagnostics, battery state, and network-aware upload retries. Point its `RoadAnalyzerAPIBaseURL` setting at the deployed dashboard before sideloading from Xcode.
+
+Completed iPhone sessions upload to `POST /api/mobile-reports`. The endpoint is deliberately unauthenticated for a personal-sideload prototype, so it must not be exposed as a production public writer without adding authentication and rate limiting.
+
 ### Two Recording Modes
 
 - **🟢 Road Quality Analysis**: Uses accelerometer data to detect bumps, potholes, and road roughness. Generates a road quality score (0-100 scale).
@@ -169,6 +175,7 @@ Visit `/calibration` to calibrate the accelerometer baseline for your device. Pl
 | `/api/recordings/all-routes` | GET | Get all routes for map |
 | `/api/segments` | GET/POST | CRUD for road segments |
 | `/api/congestion/heatmap` | GET | Get congestion heatmap data |
+| `/api/mobile-reports` | POST | Ingest a finalized native iPhone traffic report |
 
 ## iOS Safari Notes
 

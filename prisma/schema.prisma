@@ -20,6 +20,14 @@ model Drive {
   endTime     DateTime?
   status      DriveStatus @default(RECORDING)
   recordingMode RecordingMode @default(ROAD_QUALITY)
+  source        DriveSource @default(WEB)
+  idempotencyKey String? @unique
+  appSchemaVersion String?
+  trafficAnalysisVersion String?
+  deviceModel String?
+  osVersion String?
+  uploadCompletedAt DateTime?
+  diagnostics Json?
 
   // User-defined metadata
   name        String?
@@ -55,6 +63,11 @@ enum DriveStatus {
 enum RecordingMode {
   ROAD_QUALITY    // Analyze road surface conditions using accelerometer
   TRAFFIC         // Analyze traffic/congestion patterns using GPS speed
+}
+
+enum DriveSource {
+  WEB
+  IOS
 }
 
 model AccelerometerSample {

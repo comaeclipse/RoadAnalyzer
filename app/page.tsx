@@ -1,10 +1,5 @@
-import { PermissionGate } from "@/components/sensors/PermissionGate";
-import { SensorDashboard } from "@/components/sensors/SensorDashboard";
+import { redirect } from 'next/navigation';
 
 export default function Home() {
-  return (
-    <PermissionGate>
-      <SensorDashboard />
-    </PermissionGate>
-  );
+  redirect('/map');
 }

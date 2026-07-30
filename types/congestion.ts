@@ -62,6 +62,12 @@ export interface HeatmapSegment {
 
 export interface HeatmapResponse {
   heatmap: HeatmapSegment[];
+  summary?: {
+    driveCount: number;
+    eventCount: number;
+    avgSpeed: number | null;
+    updatedAt: string | null;
+  };
 }
 
 export interface TrendsResponse {

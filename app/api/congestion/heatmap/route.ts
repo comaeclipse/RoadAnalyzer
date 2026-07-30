@@ -8,6 +8,14 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const dayOfWeekParam = searchParams.get('dayOfWeek');
     const hourOfDayParam = searchParams.get('hourOfDay');
+    const fromParam = searchParams.get('from');
+    const toParam = searchParams.get('to');
+    const severityParam = searchParams.get('severity');
+    const from = fromParam ? new Date(fromParam) : null;
+    const to = toParam ? new Date(toParam) : null;
+    if ((from && Number.isNaN(from.valueOf())) || (to && Number.isNaN(to.valueOf()))) {
+      return NextResponse.json({ error: 'Invalid date filter' }, { status: 400 });
+    }
 
     // Build where clause for filtering
     const where: any = {
@@ -28,7 +36,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch statistics with segment data
-    const stats = await prisma.segmentStatistics.findMany({
+    const [stats, routes, latestDrive] = await Promise.all([
+      prisma.segmentStatistics.findMany({
       where,
       include: {
         segment: {
@@ -39,11 +48,28 @@ export async function GET(request: NextRequest) {
           },
         },
       },
-    });
+      }),
+      prisma.drive.findMany({
+        where: {
+          status: 'COMPLETED',
+          recordingMode: 'TRAFFIC',
+          ...(from || to ? { startTime: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+        },
+        orderBy: { startTime: 'desc' },
+        take: 250,
+        select: {
+          id: true,
+          startTime: true,
+          avgSpeed: true,
+          gpsData: { orderBy: { timestamp: 'asc' }, select: { latitude: true, longitude: true, speed: true } },
+          congestionEvents: { select: { severity: true } },
+        },
+      }),
+      prisma.drive.findFirst({ orderBy: { uploadCompletedAt: 'desc' }, select: { uploadCompletedAt: true, createdAt: true } }),
+    ]);
 
     // Format for heatmap visualization
-    const heatmapData: HeatmapResponse = {
-      heatmap: stats.map(stat => ({
+    const segmentHeatmap = stats.map(stat => ({
         segmentId: stat.segmentId,
         name: stat.segment.name,
         geometry: stat.segment.geometry as unknown as GeoJSON.LineString,
@@ -57,7 +83,36 @@ export async function GET(request: NextRequest) {
           heavy: stat.pctHeavy,
           gridlock: stat.pctGridlock,
         },
-      })),
+    }));
+    const fallbackRoutes = routes
+      .filter((route) => route.gpsData.length >= 2)
+      .filter((route) => !severityParam || route.congestionEvents.some((event) => event.severity === severityParam))
+      .map((route) => {
+        const score = route.avgSpeed == null ? null : Math.max(0, Math.min(100, (route.avgSpeed / 15) * 100));
+        return {
+          segmentId: `route-${route.id}`,
+          name: 'Anonymous mobile route',
+          geometry: {
+            type: 'LineString' as const,
+            coordinates: route.gpsData.map((point) => [point.longitude, point.latitude]),
+          },
+          congestionScore: score,
+          eventCount: route.congestionEvents.length,
+          avgSpeed: route.avgSpeed,
+          severityBreakdown: { freeFlow: 0, slow: 0, congested: 0, heavy: 0, gridlock: 0 },
+        };
+      });
+    const allHeatmap = [...segmentHeatmap, ...fallbackRoutes];
+    const speedValues = routes.flatMap((route) => route.gpsData.flatMap((point) => point.speed == null ? [] : [point.speed]));
+    const eventCount = routes.reduce((count, route) => count + route.congestionEvents.length, 0);
+    const heatmapData: HeatmapResponse & { summary: { driveCount: number; eventCount: number; avgSpeed: number | null; updatedAt: string | null } } = {
+      heatmap: allHeatmap,
+      summary: {
+        driveCount: routes.length,
+        eventCount,
+        avgSpeed: speedValues.length ? speedValues.reduce((sum, value) => sum + value, 0) / speedValues.length : null,
+        updatedAt: (latestDrive?.uploadCompletedAt ?? latestDrive?.createdAt ?? null)?.toISOString() ?? null,
+      },
     };
 
     return NextResponse.json(heatmapData);
