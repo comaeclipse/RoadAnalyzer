@@ -72,6 +72,22 @@ struct RecordingSession: Codable, Identifiable {
     }
 }
 
+extension CLAuthorizationStatus {
+    /// Stable wire name for the diagnostics payload. String(describing:) yields a
+    /// debug rendering like "CLAuthorizationStatus(rawValue: 3)", which is not a
+    /// contract and would change with the SDK.
+    var reportName: String {
+        switch self {
+        case .notDetermined: return "notDetermined"
+        case .restricted: return "restricted"
+        case .denied: return "denied"
+        case .authorizedAlways: return "authorizedAlways"
+        case .authorizedWhenInUse: return "authorizedWhenInUse"
+        @unknown default: return "unknown"
+        }
+    }
+}
+
 // Encode-only: the wire format is written by UploadClient and never read back,
 // so the defaulted version constants below need no decoding support.
 struct MobileReport: Encodable {
@@ -97,6 +113,6 @@ struct MobileReport: Encodable {
         locations = session.locations
         motionSamples = session.motionSamples
         device = Device(model: UIDevice.current.model, osVersion: UIDevice.current.systemVersion)
-        diagnostics = Diagnostics(batteryLevel: session.batteryLevel, networkType: session.networkType, locationAuthorization: String(describing: authorization))
+        diagnostics = Diagnostics(batteryLevel: session.batteryLevel, networkType: session.networkType, locationAuthorization: authorization.reportName)
     }
 }
