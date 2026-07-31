@@ -33,7 +33,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label(store.session == nil ? "Ready" : "Recording", systemImage: store.session == nil ? "circle" : "record.circle.fill")
-                    .foregroundStyle(store.session == nil ? .secondary : .red)
+                    .foregroundStyle(store.session == nil ? Color.secondary : Color.red)
                 Spacer()
                 Text(store.networkType.uppercased()).font(.caption.weight(.medium)).foregroundStyle(.secondary)
             }
