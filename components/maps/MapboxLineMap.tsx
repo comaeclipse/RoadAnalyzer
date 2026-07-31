@@ -13,12 +13,24 @@ export interface MapLine {
   label?: string;
 }
 
+export interface MapMarker {
+  id: string;
+  lng: number;
+  lat: number;
+  color: string;
+  label?: string;
+  size?: number;
+  selected?: boolean;
+}
+
 interface MapboxLineMapProps {
   lines: MapLine[];
   className?: string;
   interactive?: boolean;
   onLineClick?: (id: string) => void;
-  markers?: Array<{ id: string; lng: number; lat: number; color: string; label?: string }>;
+  markers?: MapMarker[];
+  selectedMarkerId?: string | null;
+  onMarkerClick?: (id: string) => void;
 }
 
 function safeId(id: string): string {
@@ -31,6 +43,8 @@ export function MapboxLineMap({
   interactive = true,
   onLineClick,
   markers = [],
+  selectedMarkerId,
+  onMarkerClick,
 }: MapboxLineMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
@@ -51,6 +65,7 @@ export function MapboxLineMap({
 
     map.on('load', () => {
       const bounds = new mapboxgl.LngLatBounds();
+      let selectedMarker: { marker: mapboxgl.Marker; lng: number; lat: number } | null = null;
       for (const line of stableLines) {
         if (line.coordinates.length < 2) continue;
         const sourceId = `source-${safeId(line.id)}`;
@@ -92,22 +107,32 @@ export function MapboxLineMap({
       }
       for (const marker of stableMarkers) {
         const element = document.createElement('div');
-        element.style.width = '14px';
-        element.style.height = '14px';
+        const size = marker.size ?? 14;
+        element.style.width = `${size}px`;
+        element.style.height = `${size}px`;
         element.style.borderRadius = '9999px';
         element.style.background = marker.color;
-        element.style.border = '2px solid white';
-        element.style.boxShadow = '0 1px 4px rgba(0,0,0,.35)';
+        element.style.border = marker.selected ? '3px solid #111827' : '2px solid white';
+        element.style.boxShadow = marker.selected ? '0 0 0 4px rgba(239,68,68,.3)' : '0 1px 4px rgba(0,0,0,.35)';
+        element.style.cursor = marker.label ? 'pointer' : 'default';
         const mapMarker = new mapboxgl.Marker({ element }).setLngLat([marker.lng, marker.lat]);
         if (marker.label) mapMarker.setPopup(new mapboxgl.Popup().setText(marker.label));
         mapMarker.addTo(map);
+        if (onMarkerClick) element.addEventListener('click', () => onMarkerClick(marker.id));
         bounds.extend([marker.lng, marker.lat]);
+        if (marker.id === selectedMarkerId) {
+          selectedMarker = { marker: mapMarker, lng: marker.lng, lat: marker.lat };
+        }
       }
       if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 40, maxZoom: 17, duration: 0 });
+      if (selectedMarker) {
+        map.flyTo({ center: [selectedMarker.lng, selectedMarker.lat], zoom: 17, duration: 450 });
+        selectedMarker.marker.togglePopup();
+      }
     });
 
     return () => map.remove();
-  }, [interactive, onLineClick, stableLines, stableMarkers, token]);
+  }, [interactive, onLineClick, onMarkerClick, selectedMarkerId, stableLines, stableMarkers, token]);
 
   if (!token) {
     return (

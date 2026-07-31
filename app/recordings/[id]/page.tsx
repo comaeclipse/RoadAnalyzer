@@ -11,6 +11,7 @@ import { formatDistanceToNow } from 'date-fns';
 import dynamic from 'next/dynamic';
 import { SensorTimeline } from '@/components/recordings/SensorTimeline';
 import { PageLayout } from '@/components/layout/PageLayout';
+import type { TrafficFeature } from '@/components/recordings/RouteMap';
 
 // Dynamically import the map to avoid SSR issues
 const RouteMap = dynamic(() => import('@/components/recordings/RouteMap'), {
@@ -171,6 +172,7 @@ export default function RecordingDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [selectedTrafficFeatureId, setSelectedTrafficFeatureId] = useState<string | null>(null);
 
   const handleDelete = async () => {
     if (!confirm('Are you sure you want to delete this recording? This cannot be undone.')) {
@@ -235,8 +237,8 @@ export default function RecordingDetailPage() {
 
   // Detect stops and slow zones from GPS data
   const detectStopsAndSlowZones = () => {
-    const stops: Array<{ start: number; end: number; duration: number; location: GpsPoint }> = [];
-    const slowZones: Array<{ start: number; end: number; duration: number; avgSpeed: number; location: GpsPoint }> = [];
+    const stops: TrafficFeature[] = [];
+    const slowZones: TrafficFeature[] = [];
 
     let stopStart: number | null = null;
     let slowStart: number | null = null;
@@ -260,10 +262,12 @@ export default function RecordingDetailPage() {
           const duration = point.timestamp - gpsPoints[stopStart].timestamp;
           if (duration >= MIN_DURATION) {
             stops.push({
+              id: `stop-${stopStart}-${i - 1}`,
+              kind: 'stop',
               start: stopStart,
               end: i - 1,
               duration,
-              location: gpsPoints[stopStart],
+              location: gpsPoints[Math.floor((stopStart + i - 1) / 2)],
             });
           }
           stopStart = null;
@@ -284,11 +288,13 @@ export default function RecordingDetailPage() {
           if (duration >= MIN_DURATION) {
             const avgSpeed = slowSpeeds.reduce((a, b) => a + b, 0) / slowSpeeds.length;
             slowZones.push({
+              id: `slow-zone-${slowStart}-${i - 1}`,
+              kind: 'slow-zone',
               start: slowStart,
               end: i - 1,
               duration,
               avgSpeed,
-              location: gpsPoints[slowStart],
+              location: gpsPoints[Math.floor((slowStart + i - 1) / 2)],
             });
           }
           slowStart = null;
@@ -303,10 +309,12 @@ export default function RecordingDetailPage() {
       const duration = lastPoint.timestamp - gpsPoints[stopStart].timestamp;
       if (duration >= MIN_DURATION) {
         stops.push({
+          id: `stop-${stopStart}-${gpsPoints.length - 1}`,
+          kind: 'stop',
           start: stopStart,
           end: gpsPoints.length - 1,
           duration,
-          location: gpsPoints[stopStart],
+          location: gpsPoints[Math.floor((stopStart + gpsPoints.length - 1) / 2)],
         });
       }
     }
@@ -317,11 +325,13 @@ export default function RecordingDetailPage() {
       if (duration >= MIN_DURATION) {
         const avgSpeed = slowSpeeds.reduce((a, b) => a + b, 0) / slowSpeeds.length;
         slowZones.push({
+          id: `slow-zone-${slowStart}-${gpsPoints.length - 1}`,
+          kind: 'slow-zone',
           start: slowStart,
           end: gpsPoints.length - 1,
           duration,
           avgSpeed,
-          location: gpsPoints[slowStart],
+          location: gpsPoints[Math.floor((slowStart + gpsPoints.length - 1) / 2)],
         });
       }
     }
@@ -667,6 +677,10 @@ export default function RecordingDetailPage() {
               accelPoints={accelPoints}
               mode={drive.recordingMode}
               matchedGeometry={tripAnalysis?.matchedGeometry}
+              stops={stops}
+              slowZones={slowZones}
+              selectedTrafficFeatureId={selectedTrafficFeatureId}
+              onTrafficFeatureSelect={setSelectedTrafficFeatureId}
             />
           ) : (
             <div className="h-[400px] bg-gray-50 rounded-lg flex items-center justify-center text-gray-400 border border-gray-200">
@@ -675,6 +689,35 @@ export default function RecordingDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {drive.recordingMode === 'TRAFFIC' && (stops.length > 0 || slowZones.length > 0) && (
+        <Card className="mb-6 border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg">Detected traffic features</CardTitle>
+            <p className="text-sm text-gray-500">Markers are neutral observations. Tagging them as red lights or stop signs can be added later.</p>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {[...stops, ...slowZones].map((feature, index) => {
+              const active = feature.id === selectedTrafficFeatureId;
+              const isStop = feature.kind === 'stop';
+              return (
+                <button
+                  key={feature.id}
+                  type="button"
+                  onClick={() => setSelectedTrafficFeatureId(active ? null : feature.id)}
+                  className={`w-full rounded-lg border p-3 text-left transition-colors ${active ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-400'}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className={`font-medium ${isStop ? 'text-red-700' : 'text-orange-700'}`}>{isStop ? 'Detected stop' : 'Slow zone'} {index + 1}</span>
+                    <span className="text-sm text-gray-600">{formatDuration(feature.duration)}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">{isStop ? 'Stationary GPS observation; currently unclassified.' : `Average speed ${(feature.avgSpeed! * 2.23694).toFixed(1)} mph.`} Select to locate it on the map.</p>
+                </button>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       {maneuvers.length > 0 && (
         <Card className="mb-6 border-gray-200">
