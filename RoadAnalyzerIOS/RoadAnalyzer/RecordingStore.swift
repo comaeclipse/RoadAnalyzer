@@ -17,6 +17,7 @@ final class RecordingStore: NSObject, ObservableObject {
     private let pathMonitor = NWPathMonitor()
     private let persistenceURL: URL
     private var pending: [RecordingSession] = []
+    private var isUploading = false
 
     override init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -106,7 +107,13 @@ final class RecordingStore: NSObject, ObservableObject {
     }
 
     private func retryUploads() async {
-        guard networkType != "offline" else { return }
+        // A pending session is only removed once its upload finishes, so a second
+        // call arriving mid-flight (a Wi-Fi to cellular switch fires the path
+        // handler) would post the same report twice. The flag is read and set
+        // without an await in between, so the main actor makes this check atomic.
+        guard networkType != "offline", !isUploading else { return }
+        isUploading = true
+        defer { isUploading = false }
         for index in pending.indices.reversed() {
             guard pending[index].nextUploadAt.map({ $0 <= .now }) ?? true else { continue }
             do {

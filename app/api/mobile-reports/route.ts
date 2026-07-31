@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { DriveSource } from '@prisma/client';
+import { DriveSource, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { calculateDistance } from '@/lib/sensor-utils';
 import { validateMobileReport } from '@/lib/mobile-report';
@@ -18,8 +18,15 @@ export async function POST(request: NextRequest) {
     if (!parsed.valid) return NextResponse.json({ error: parsed.error }, { status: 400 });
     const report = parsed.value;
 
-    const existing = await prisma.drive.findUnique({ where: { idempotencyKey: report.idempotencyKey } });
-    if (existing) return NextResponse.json({ driveId: existing.id, duplicate: true, status: existing.status });
+    const duplicateResponse = async () => {
+      const existing = await prisma.drive.findUnique({ where: { idempotencyKey: report.idempotencyKey } });
+      return existing
+        ? NextResponse.json({ driveId: existing.id, duplicate: true, status: existing.status })
+        : null;
+    };
+
+    const alreadyIngested = await duplicateResponse();
+    if (alreadyIngested) return alreadyIngested;
 
     let distance = 0;
     const gpsData = report.locations.map((point, index) => {
@@ -40,7 +47,11 @@ export async function POST(request: NextRequest) {
       };
     });
     const speeds = gpsData.flatMap((sample) => sample.speed == null ? [] : [sample.speed]);
-    const drive = await prisma.drive.create({
+    // The pre-check above cannot be trusted on its own: a client that retries
+    // while its first request is still in flight puts two creates in the air at
+    // once, and both pass the check. The unique index is the real guard, so a
+    // P2002 here means a concurrent request already ingested this report.
+    const createDrive = () => prisma.drive.create({
       data: {
         startTime: new Date(report.startedAt),
         endTime: new Date(report.endedAt),
@@ -72,6 +83,17 @@ export async function POST(request: NextRequest) {
         },
       },
     });
+
+    let drive;
+    try {
+      drive = await createDrive();
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const raced = await duplicateResponse();
+        if (raced) return raced;
+      }
+      throw error;
+    }
 
     const analysis = await runCongestionAnalysis(drive.id);
     await prisma.drive.update({
