@@ -27,6 +27,7 @@ export async function GET(
         createdAt: true,
         roughnessScore: true,
         roughnessBreakdown: true,
+        routeTemplate: { select: { id: true, name: true } },
       },
     });
 
@@ -145,6 +146,7 @@ export async function GET(
       tripAnalysis,
       maneuvers,
       trafficTags,
+      routeTemplate: drive.routeTemplate,
     });
   } catch (error) {
     console.error('Failed to fetch recording:', error);

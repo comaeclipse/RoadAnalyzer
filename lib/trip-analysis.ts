@@ -10,6 +10,7 @@ import {
 import { calculateBoundingBox } from '@/lib/segment-matching';
 import { analyzeDirections } from '@/lib/trip-directions';
 import { runCongestionAnalysis, type CongestionAnalysisResult } from '@/lib/post-processing';
+import { findMatchingRouteTemplate } from '@/lib/route-template-matching';
 
 const PROCESSING_STALE_MS = 5 * 60 * 1_000;
 
@@ -294,6 +295,11 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
       roadCondition,
       snapshotOnly: true,
     };
+    const templates = await prisma.routeTemplate.findMany({
+      where: { isActive: true },
+      select: { id: true, geometry: true, distance: true, direction: true },
+    });
+    const routeTemplateId = findMatchingRouteTemplate(result.geometry, result.distance, directions.dominantDirection, templates);
     const finalStatus: TripAnalysisStatus = result.partial ? 'PARTIAL' : 'COMPLETED';
     await prisma.$transaction([
       prisma.gpsSegmentMatch.deleteMany({ where: { gps: { driveId } } }),
@@ -306,6 +312,7 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
           ...maneuver,
         })),
       }),
+      prisma.drive.update({ where: { id: driveId }, data: { routeTemplateId } }),
       prisma.tripAnalysis.update({
         where: { id: analysis.id },
         data: {

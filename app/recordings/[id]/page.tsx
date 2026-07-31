@@ -46,6 +46,7 @@ interface Drive {
   createdAt: string;
   roughnessScore: number | null;
   roughnessBreakdown: RoughnessBreakdown | null;
+  routeTemplate?: { id: string; name: string } | null;
 }
 
 interface CongestionEvent {
@@ -209,6 +210,7 @@ export default function RecordingDetailPage() {
   const [routeName, setRouteName] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [savingFeatureKey, setSavingFeatureKey] = useState<string | null>(null);
+  const [savingRouteTemplate, setSavingRouteTemplate] = useState(false);
 
   const handleDelete = async () => {
     if (!confirm('Are you sure you want to delete this recording? This cannot be undone.')) {
@@ -308,6 +310,26 @@ export default function RecordingDetailPage() {
       alert('Could not save the traffic tag.');
     } finally {
       setSavingFeatureKey(null);
+    }
+  };
+
+  const saveAsRouteTemplate = async () => {
+    if (!drive) return;
+    const name = window.prompt('Name this reusable route', drive.name || 'Route #1 to work');
+    if (!name?.trim()) return;
+    setSavingRouteTemplate(true);
+    try {
+      const response = await fetch(`/api/recordings/${drive.id}/route-template`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+      });
+      if (!response.ok) throw new Error('Failed to save route');
+      const { template } = await response.json() as { template: { id: string; name: string } };
+      setDrive((current) => current ? { ...current, routeTemplate: template, name: current.name || template.name } : current);
+    } catch (error) {
+      console.error(error);
+      alert('Could not save the reusable route. It needs a completed map match first.');
+    } finally {
+      setSavingRouteTemplate(false);
     }
   };
 
@@ -497,6 +519,13 @@ export default function RecordingDetailPage() {
           <p className="text-sm text-gray-500">
             {formatDistanceToNow(new Date(drive.createdAt), { addSuffix: true })}
           </p>
+          <div className="mt-2">
+            {drive.routeTemplate ? (
+              <span className="rounded-full bg-violet-100 px-2 py-1 text-xs font-medium text-violet-800">Reusable route: {drive.routeTemplate.name}</span>
+            ) : (tripAnalysis?.status === 'COMPLETED' || tripAnalysis?.status === 'PARTIAL') ? (
+              <Button size="sm" variant="outline" onClick={saveAsRouteTemplate} disabled={savingRouteTemplate}>{savingRouteTemplate ? 'Saving route…' : 'Save as reusable route'}</Button>
+            ) : null}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2">

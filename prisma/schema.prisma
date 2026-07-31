@@ -24,6 +24,7 @@ model Drive {
   idempotencyKey         String?       @unique
   appSchemaVersion       String?
   trafficAnalysisVersion String?
+  routeTemplateId        String?
   deviceModel            String?
   osVersion              String?
   uploadCompletedAt      DateTime?
@@ -51,9 +52,26 @@ model Drive {
   congestionEvents  CongestionEvent[]
   trafficTags       TrafficTag[]
   tripAnalysis      TripAnalysis?
+  routeTemplate     RouteTemplate? @relation(fields: [routeTemplateId], references: [id], onDelete: SetNull)
 
   @@index([createdAt(sort: Desc)])
   @@index([status])
+  @@index([routeTemplateId])
+}
+
+model RouteTemplate {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  name           String
+  geometry       Json
+  distance       Float
+  direction      CardinalDirection?
+  referenceDriveId String @unique
+  isActive       Boolean @default(true)
+  drives         Drive[]
+
+  @@index([isActive])
 }
 
 enum DriveStatus {
