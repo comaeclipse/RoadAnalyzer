@@ -49,6 +49,7 @@ model Drive {
   accelerometerData AccelerometerSample[]
   gpsData           GpsSample[]
   congestionEvents  CongestionEvent[]
+  trafficTags       TrafficTag[]
   tripAnalysis      TripAnalysis?
 
   @@index([createdAt(sort: Desc)])
@@ -230,6 +231,7 @@ model TripAnalysis {
   netDirection       CardinalDirection?
   dominantDirection  CardinalDirection?
   directionBreakdown Json?
+  trafficContext     Json?
   errorCode          String?
   errorMessage       String?
   startedAt          DateTime           @default(now())
@@ -307,6 +309,36 @@ enum CongestionSeverity {
   CONGESTED
   HEAVY
   GRIDLOCK
+}
+
+enum TrafficTagKind {
+  RED_LIGHT
+  STOP_SIGN
+  INTERSECTION
+  TRAFFIC
+  PARKING
+  OTHER
+}
+
+model TrafficTag {
+  id         String         @id @default(cuid())
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  driveId    String
+  drive      Drive          @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  featureKey String
+  featureType String
+  kind       TrafficTagKind
+  note       String?
+  latitude   Float
+  longitude  Float
+  startTime  DateTime
+  endTime    DateTime
+  duration   Int
+
+  @@unique([driveId, featureKey])
+  @@index([driveId])
+  @@index([kind])
 }
 
 // Pre-aggregated statistics for a segment (materialized view pattern)

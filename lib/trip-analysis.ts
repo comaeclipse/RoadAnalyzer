@@ -191,6 +191,7 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
       timestamp: true,
       accuracy: true,
       heading: true,
+      speed: true,
     },
   });
 
@@ -275,6 +276,24 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
     }
 
     const directions = analyzeDirections(result.geometry);
+    const observedSpeeds = gpsSamples.flatMap((sample) => sample.speed == null ? [] : [sample.speed]);
+    const observedAverage = observedSpeeds.length
+      ? observedSpeeds.reduce((sum, speed) => sum + speed, 0) / observedSpeeds.length
+      : null;
+    const speedRatio = observedAverage != null && result.trafficContext.speedLimitAverage
+      ? observedAverage / result.trafficContext.speedLimitAverage
+      : null;
+    const roadCondition = speedRatio == null ? 'INSUFFICIENT_CONTEXT'
+      : speedRatio >= 0.75 ? 'NORMAL_FOR_ROAD'
+        : speedRatio >= 0.45 ? 'SLOW_FOR_ROAD'
+          : 'LOW_FOR_ROAD';
+    const trafficContext = {
+      ...result.trafficContext,
+      observedAverageSpeed: observedAverage,
+      observedSpeedRatio: speedRatio,
+      roadCondition,
+      snapshotOnly: true,
+    };
     const finalStatus: TripAnalysisStatus = result.partial ? 'PARTIAL' : 'COMPLETED';
     await prisma.$transaction([
       prisma.gpsSegmentMatch.deleteMany({ where: { gps: { driveId } } }),
@@ -300,6 +319,7 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
           netDirection: directions.netDirection,
           dominantDirection: directions.dominantDirection,
           directionBreakdown: directions.directionBreakdown as unknown as Prisma.InputJsonValue,
+          trafficContext: trafficContext as unknown as Prisma.InputJsonValue,
           completedAt: new Date(),
           errorCode: result.partial ? 'PARTIAL_COVERAGE' : null,
           errorMessage: null,

@@ -38,7 +38,7 @@ export async function GET(
     }
 
     // Fetch GPS, accelerometer, and congestion data in parallel
-    const [gpsData, accelData, congestionEvents, analysisRecord] = await Promise.all([
+    const [gpsData, accelData, congestionEvents, analysisRecord, trafficTags] = await Promise.all([
       prisma.gpsSample.findMany({
         where: { driveId: id },
         orderBy: { timestamp: 'asc' },
@@ -88,6 +88,7 @@ export async function GET(
         where: { driveId: id },
         include: { maneuvers: { orderBy: { sequence: 'asc' } } },
       }),
+      prisma.trafficTag.findMany({ where: { driveId: id }, orderBy: { createdAt: 'asc' } }),
     ]);
 
     // Convert BigInt timestamps to numbers for JSON serialization
@@ -118,6 +119,7 @@ export async function GET(
       netDirection: analysisRecord.netDirection,
       dominantDirection: analysisRecord.dominantDirection,
       directionBreakdown: analysisRecord.directionBreakdown,
+      trafficContext: analysisRecord.trafficContext,
       errorCode: analysisRecord.errorCode,
     } : null;
     const maneuvers = analysisRecord?.maneuvers.map((maneuver) => ({
@@ -142,6 +144,7 @@ export async function GET(
       congestionEvents,
       tripAnalysis,
       maneuvers,
+      trafficTags,
     });
   } catch (error) {
     console.error('Failed to fetch recording:', error);
@@ -158,11 +161,18 @@ export async function PUT(
 ) {
   try {
     const { id } = params;
-    const body = (await request.json()) as {
-      points: { lat: number; lng: number }[];
-    };
+    const body = (await request.json()) as { points?: { lat: number; lng: number }[]; name?: string | null };
 
-    if (!body?.points || !Array.isArray(body.points) || body.points.length === 0) {
+    if (body.name !== undefined) {
+      if (body.name !== null && (typeof body.name !== 'string' || body.name.trim().length > 120)) {
+        return NextResponse.json({ error: 'name must be 120 characters or fewer' }, { status: 400 });
+      }
+      const drive = await prisma.drive.update({ where: { id }, data: { name: body.name?.trim() || null }, select: { id: true, name: true } });
+      return NextResponse.json({ drive });
+    }
+
+    const points = body.points;
+    if (!points || !Array.isArray(points) || points.length === 0) {
       return NextResponse.json({ error: 'points array required' }, { status: 400 });
     }
 
@@ -177,9 +187,9 @@ export async function PUT(
       return NextResponse.json({ error: 'No GPS samples for drive' }, { status: 404 });
     }
 
-    if (samples.length !== body.points.length) {
+    if (samples.length !== points.length) {
       return NextResponse.json(
-        { error: `Point count mismatch. Existing ${samples.length}, received ${body.points.length}` },
+        { error: `Point count mismatch. Existing ${samples.length}, received ${points.length}` },
         { status: 400 }
       );
     }
@@ -190,8 +200,8 @@ export async function PUT(
         prisma.gpsSample.update({
           where: { id: s.id },
           data: {
-            latitude: body.points[idx].lat,
-            longitude: body.points[idx].lng,
+            latitude: points[idx].lat,
+            longitude: points[idx].lng,
           },
         })
       )

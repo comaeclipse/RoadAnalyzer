@@ -59,7 +59,18 @@ export interface MapMatchResult {
   edges: MatchedEdge[];
   points: MatchedPoint[];
   maneuvers: NormalizedManeuver[];
+  trafficContext: MapboxTrafficContext;
   partial: boolean;
+}
+
+export interface MapboxTrafficContext {
+  provider: 'mapbox';
+  analyzedAt: string;
+  annotatedDistance: number;
+  speedLimitAverage: number | null;
+  speedLimitCoverage: number;
+  congestionScore: number | null;
+  congestionLevel: 'LOW' | 'MODERATE' | 'HEAVY' | 'SEVERE' | 'UNKNOWN';
 }
 
 interface MapboxTracepoint {
@@ -88,7 +99,15 @@ interface MapboxMatching {
   distance: number;
   geometry: GeoJSON.LineString;
   linear_references?: string[];
-  legs?: Array<{ steps?: MapboxStep[] }>;
+  legs?: Array<{
+    steps?: MapboxStep[];
+    annotation?: {
+      distance?: number[];
+      congestion?: Array<'low' | 'moderate' | 'heavy' | 'severe' | 'unknown'>;
+      congestion_numeric?: Array<number | null>;
+      maxspeed?: Array<{ speed?: number; unit?: 'mph' | 'km/h'; unknown?: boolean }>;
+    };
+  }>;
 }
 
 interface MapboxResponse {
@@ -184,6 +203,7 @@ async function requestChunk(
     overview: 'full',
     language: 'en',
     linear_references: 'true',
+    annotations: 'distance,congestion,congestion_numeric,maxspeed',
   });
   if (includeWaypoints) body.set('waypoints', `0;${points.length - 1}`);
 
@@ -191,7 +211,7 @@ async function requestChunk(
   const timeout = setTimeout(() => controller.abort(), 25_000);
   try {
     const response = await fetchImpl(
-      `https://api.mapbox.com/matching/v5/mapbox/driving?access_token=${encodeURIComponent(token)}`,
+      `https://api.mapbox.com/matching/v5/mapbox/driving-traffic?access_token=${encodeURIComponent(token)}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -324,6 +344,57 @@ function normalizeManeuvers(matching: MapboxMatching): NormalizedManeuver[] {
   return result;
 }
 
+function summarizeTraffic(matchings: MapboxMatching[]): MapboxTrafficContext {
+  let annotatedDistance = 0;
+  let speedLimitDistance = 0;
+  let weightedSpeedLimit = 0;
+  let congestionDistance = 0;
+  let weightedCongestion = 0;
+  const levelWeight: Record<string, number> = { low: 15, moderate: 45, heavy: 70, severe: 90 };
+
+  for (const matching of matchings) {
+    for (const leg of matching.legs ?? []) {
+      const annotation = leg.annotation;
+      if (!annotation?.distance) continue;
+      annotation.distance.forEach((distance, index) => {
+        if (!Number.isFinite(distance) || distance <= 0) return;
+        annotatedDistance += distance;
+        const speedLimit = annotation.maxspeed?.[index];
+        if (speedLimit?.speed && !speedLimit.unknown) {
+          const metersPerSecond = speedLimit.unit === 'mph'
+            ? speedLimit.speed * 0.44704
+            : speedLimit.speed / 3.6;
+          weightedSpeedLimit += metersPerSecond * distance;
+          speedLimitDistance += distance;
+        }
+        const numeric = annotation.congestion_numeric?.[index];
+        const level = annotation.congestion?.[index];
+        const congestion = numeric ?? (level ? levelWeight[level] : undefined);
+        if (congestion != null && Number.isFinite(congestion)) {
+          weightedCongestion += congestion * distance;
+          congestionDistance += distance;
+        }
+      });
+    }
+  }
+
+  const congestionScore = congestionDistance ? weightedCongestion / congestionDistance : null;
+  const congestionLevel = congestionScore == null ? 'UNKNOWN'
+    : congestionScore >= 80 ? 'SEVERE'
+      : congestionScore >= 60 ? 'HEAVY'
+        : congestionScore >= 30 ? 'MODERATE'
+          : 'LOW';
+  return {
+    provider: 'mapbox',
+    analyzedAt: new Date().toISOString(),
+    annotatedDistance,
+    speedLimitAverage: speedLimitDistance ? weightedSpeedLimit / speedLimitDistance : null,
+    speedLimitCoverage: annotatedDistance ? speedLimitDistance / annotatedDistance : 0,
+    congestionScore,
+    congestionLevel,
+  };
+}
+
 export function findNearestMatchedEdge(
   location: [number, number],
   edges: MatchedEdge[]
@@ -403,6 +474,7 @@ export async function matchTrace(
   const edgeMap = new Map<string, MatchedEdge>();
   const pointMap = new Map<string, MatchedPoint>();
   const maneuverMap = new Map<string, NormalizedManeuver>();
+  const trafficMatchings: MapboxMatching[] = [];
   let weightedConfidence = 0;
   let matchedDistance = 0;
   let successfulChunks = 0;
@@ -412,6 +484,7 @@ export async function matchTrace(
     successfulChunks++;
     const chunk = chunks[chunkIndex];
     const matchings = response.matchings ?? [];
+    trafficMatchings.push(...matchings);
     const tracepoints = response.tracepoints ?? [];
     const chunkEdges: MatchedEdge[] = [];
     for (let matchingIndex = 0; matchingIndex < matchings.length; matchingIndex++) {
@@ -464,6 +537,7 @@ export async function matchTrace(
     edges: Array.from(edgeMap.values()),
     points: Array.from(pointMap.values()),
     maneuvers: Array.from(maneuverMap.values()),
+    trafficContext: summarizeTraffic(trafficMatchings),
     partial: successfulChunks < chunks.length || coverage < 0.9,
   };
 }

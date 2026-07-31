@@ -90,6 +90,18 @@ interface TripAnalysis {
   netDirection: string | null;
   dominantDirection: string | null;
   directionBreakdown: Record<string, number> | null;
+  trafficContext: {
+    provider: 'mapbox';
+    analyzedAt: string;
+    speedLimitAverage: number | null;
+    speedLimitCoverage: number;
+    congestionScore: number | null;
+    congestionLevel: 'LOW' | 'MODERATE' | 'HEAVY' | 'SEVERE' | 'UNKNOWN';
+    observedAverageSpeed: number | null;
+    observedSpeedRatio: number | null;
+    roadCondition: 'NORMAL_FOR_ROAD' | 'SLOW_FOR_ROAD' | 'LOW_FOR_ROAD' | 'INSUFFICIENT_CONTEXT';
+    snapshotOnly: boolean;
+  } | null;
   errorCode: string | null;
 }
 
@@ -102,6 +114,25 @@ interface Maneuver {
   angleDegrees: number | null;
   confidence: number | null;
 }
+
+type TrafficTagKind = 'RED_LIGHT' | 'STOP_SIGN' | 'INTERSECTION' | 'TRAFFIC' | 'PARKING' | 'OTHER';
+
+interface TrafficTag {
+  id: string;
+  featureKey: string;
+  kind: TrafficTagKind;
+  note: string | null;
+}
+
+const trafficTagOptions: Array<{ value: TrafficTagKind | 'UNCLASSIFIED'; label: string }> = [
+  { value: 'UNCLASSIFIED', label: 'Unclassified' },
+  { value: 'RED_LIGHT', label: 'Red light' },
+  { value: 'STOP_SIGN', label: 'Stop sign' },
+  { value: 'INTERSECTION', label: 'Intersection delay' },
+  { value: 'TRAFFIC', label: 'Traffic queue' },
+  { value: 'PARKING', label: 'Parking / destination' },
+  { value: 'OTHER', label: 'Other' },
+];
 
 function getRoughnessLabel(score: number): string {
   if (score >= 90) return 'Excellent';
@@ -169,10 +200,15 @@ export default function RecordingDetailPage() {
   const [congestionEvents, setCongestionEvents] = useState<CongestionEvent[]>([]);
   const [tripAnalysis, setTripAnalysis] = useState<TripAnalysis | null>(null);
   const [maneuvers, setManeuvers] = useState<Maneuver[]>([]);
+  const [trafficTags, setTrafficTags] = useState<TrafficTag[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [selectedTrafficFeatureId, setSelectedTrafficFeatureId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [routeName, setRouteName] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [savingFeatureKey, setSavingFeatureKey] = useState<string | null>(null);
 
   const handleDelete = async () => {
     if (!confirm('Are you sure you want to delete this recording? This cannot be undone.')) {
@@ -203,6 +239,8 @@ export default function RecordingDetailPage() {
         setCongestionEvents(data.congestionEvents || []);
         setTripAnalysis(data.tripAnalysis || null);
         setManeuvers(data.maneuvers || []);
+        setTrafficTags(data.trafficTags || []);
+        setRouteName(data.drive.name || '');
       } catch (err) {
         setError('Failed to load recording');
         console.error(err);
@@ -214,6 +252,64 @@ export default function RecordingDetailPage() {
       fetchDrive();
     }
   }, [params.id]);
+
+  const saveRouteName = async () => {
+    if (!drive) return;
+    setSavingName(true);
+    try {
+      const response = await fetch(`/api/recordings/${drive.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: routeName }),
+      });
+      if (!response.ok) throw new Error('Failed to save name');
+      const data = await response.json();
+      setDrive({ ...drive, name: data.drive.name });
+      setEditingName(false);
+    } catch (error) {
+      console.error(error);
+      alert('Could not save the route name.');
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const saveTrafficTag = async (feature: TrafficFeature, value: TrafficTagKind | 'UNCLASSIFIED') => {
+    if (!drive) return;
+    setSavingFeatureKey(feature.id);
+    try {
+      if (value === 'UNCLASSIFIED') {
+        const response = await fetch(`/api/recordings/${drive.id}/traffic-tags?featureKey=${encodeURIComponent(feature.id)}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('Failed to clear tag');
+        setTrafficTags((current) => current.filter((tag) => tag.featureKey !== feature.id));
+      } else {
+        const start = gpsPoints[feature.start];
+        const end = gpsPoints[feature.end];
+        const response = await fetch(`/api/recordings/${drive.id}/traffic-tags`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            featureKey: feature.id,
+            featureType: feature.kind,
+            kind: value,
+            latitude: feature.location.lat,
+            longitude: feature.location.lng,
+            startTime: start.timestamp,
+            endTime: end.timestamp,
+            duration: feature.duration,
+          }),
+        });
+        if (!response.ok) throw new Error('Failed to save tag');
+        const { tag } = await response.json() as { tag: TrafficTag };
+        setTrafficTags((current) => [...current.filter((item) => item.featureKey !== tag.featureKey), tag]);
+      }
+    } catch (error) {
+      console.error(error);
+      alert('Could not save the traffic tag.');
+    } finally {
+      setSavingFeatureKey(null);
+    }
+  };
 
   const formatDuration = (ms: number | null) => {
     if (!ms) return '-';
@@ -262,7 +358,7 @@ export default function RecordingDetailPage() {
           const duration = point.timestamp - gpsPoints[stopStart].timestamp;
           if (duration >= MIN_DURATION) {
             stops.push({
-              id: `stop-${stopStart}-${i - 1}`,
+              id: `stop-${gpsPoints[stopStart].timestamp}-${gpsPoints[i - 1].timestamp}`,
               kind: 'stop',
               start: stopStart,
               end: i - 1,
@@ -288,7 +384,7 @@ export default function RecordingDetailPage() {
           if (duration >= MIN_DURATION) {
             const avgSpeed = slowSpeeds.reduce((a, b) => a + b, 0) / slowSpeeds.length;
             slowZones.push({
-              id: `slow-zone-${slowStart}-${i - 1}`,
+              id: `slow-zone-${gpsPoints[slowStart].timestamp}-${gpsPoints[i - 1].timestamp}`,
               kind: 'slow-zone',
               start: slowStart,
               end: i - 1,
@@ -309,7 +405,7 @@ export default function RecordingDetailPage() {
       const duration = lastPoint.timestamp - gpsPoints[stopStart].timestamp;
       if (duration >= MIN_DURATION) {
         stops.push({
-          id: `stop-${stopStart}-${gpsPoints.length - 1}`,
+          id: `stop-${gpsPoints[stopStart].timestamp}-${lastPoint.timestamp}`,
           kind: 'stop',
           start: stopStart,
           end: gpsPoints.length - 1,
@@ -325,7 +421,7 @@ export default function RecordingDetailPage() {
       if (duration >= MIN_DURATION) {
         const avgSpeed = slowSpeeds.reduce((a, b) => a + b, 0) / slowSpeeds.length;
         slowZones.push({
-          id: `slow-zone-${slowStart}-${gpsPoints.length - 1}`,
+          id: `slow-zone-${gpsPoints[slowStart].timestamp}-${lastPoint.timestamp}`,
           kind: 'slow-zone',
           start: slowStart,
           end: gpsPoints.length - 1,
@@ -386,9 +482,18 @@ export default function RecordingDetailPage() {
     <PageLayout maxWidth="4xl">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">
-            {drive.name || 'Untitled Drive'}
-          </h1>
+          {editingName ? (
+            <div className="flex items-center gap-2">
+              <input value={routeName} onChange={(event) => setRouteName(event.target.value)} maxLength={120} autoFocus className="h-10 rounded-md border border-gray-300 px-3 text-xl font-semibold text-gray-900" placeholder="Route #1 to work" />
+              <Button size="sm" onClick={saveRouteName} disabled={savingName}>{savingName ? 'Saving…' : 'Save'}</Button>
+              <Button size="sm" variant="outline" onClick={() => { setRouteName(drive.name || ''); setEditingName(false); }} disabled={savingName}>Cancel</Button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setEditingName(true)} className="text-left">
+              <h1 className="text-2xl font-semibold text-gray-900">{drive.name || 'Name this route'}</h1>
+              <span className="text-xs text-gray-500 underline">Rename this recording</span>
+            </button>
+          )}
           <p className="text-sm text-gray-500">
             {formatDistanceToNow(new Date(drive.createdAt), { addSuffix: true })}
           </p>
@@ -694,27 +799,54 @@ export default function RecordingDetailPage() {
         <Card className="mb-6 border-gray-200">
           <CardHeader className="pb-2">
             <CardTitle className="text-lg">Detected traffic features</CardTitle>
-            <p className="text-sm text-gray-500">Markers are neutral observations. Tagging them as red lights or stop signs can be added later.</p>
+            <p className="text-sm text-gray-500">Classify each observation. Tags are saved with this drive and preserve the original GPS evidence.</p>
           </CardHeader>
           <CardContent className="space-y-2">
             {[...stops, ...slowZones].map((feature, index) => {
               const active = feature.id === selectedTrafficFeatureId;
               const isStop = feature.kind === 'stop';
+              const tag = trafficTags.find((item) => item.featureKey === feature.id);
               return (
-                <button
+                <div
                   key={feature.id}
-                  type="button"
-                  onClick={() => setSelectedTrafficFeatureId(active ? null : feature.id)}
                   className={`w-full rounded-lg border p-3 text-left transition-colors ${active ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-400'}`}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className={`font-medium ${isStop ? 'text-red-700' : 'text-orange-700'}`}>{isStop ? 'Detected stop' : 'Slow zone'} {index + 1}</span>
-                    <span className="text-sm text-gray-600">{formatDuration(feature.duration)}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">{isStop ? 'Stationary GPS observation; currently unclassified.' : `Average speed ${(feature.avgSpeed! * 2.23694).toFixed(1)} mph.`} Select to locate it on the map.</p>
-                </button>
+                  <button type="button" onClick={() => setSelectedTrafficFeatureId(active ? null : feature.id)} className="w-full text-left">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className={`font-medium ${isStop ? 'text-red-700' : 'text-orange-700'}`}>{isStop ? 'Detected stop' : 'Slow zone'} {index + 1}</span>
+                      <span className="text-sm text-gray-600">{formatDuration(feature.duration)}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-500">{isStop ? 'Stationary GPS observation.' : `Average speed ${(feature.avgSpeed! * 2.23694).toFixed(1)} mph.`} Select to locate it on the map.</p>
+                  </button>
+                  <label className="mt-3 flex items-center gap-2 text-sm text-gray-600">
+                    Tag
+                    <select value={tag?.kind ?? 'UNCLASSIFIED'} onChange={(event) => saveTrafficTag(feature, event.target.value as TrafficTagKind | 'UNCLASSIFIED')} disabled={savingFeatureKey === feature.id} className="rounded-md border border-gray-300 bg-white px-2 py-1 text-gray-900">
+                      {trafficTagOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                    {savingFeatureKey === feature.id && <span className="text-xs">Saving…</span>}
+                  </label>
+                </div>
               );
             })}
+          </CardContent>
+        </Card>
+      )}
+
+      {drive.recordingMode === 'TRAFFIC' && tripAnalysis?.trafficContext && (
+        <Card className="mb-6 border-emerald-200 bg-emerald-50/40">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Road-speed context</CardTitle>
+            <p className="text-sm text-gray-600">Compares your recorded speed with Mapbox road-speed data. This is a post-upload traffic snapshot, not historical proof of conditions during the drive.</p>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <AnalysisMetric label="Your average" value={tripAnalysis.trafficContext.observedAverageSpeed == null ? '—' : `${(tripAnalysis.trafficContext.observedAverageSpeed * 2.23694).toFixed(1)} mph`} />
+            <AnalysisMetric label="Road speed limit" value={tripAnalysis.trafficContext.speedLimitAverage == null ? 'Unavailable' : `${(tripAnalysis.trafficContext.speedLimitAverage * 2.23694).toFixed(0)} mph`} />
+            <AnalysisMetric label="Relative pace" value={tripAnalysis.trafficContext.observedSpeedRatio == null ? '—' : `${Math.round(tripAnalysis.trafficContext.observedSpeedRatio * 100)}%`} />
+            <AnalysisMetric label="Road condition" value={tripAnalysis.trafficContext.roadCondition.replaceAll('_', ' ').toLowerCase()} />
+            <AnalysisMetric label="Mapbox snapshot" value={tripAnalysis.trafficContext.congestionLevel.toLowerCase()} />
+            <AnalysisMetric label="Traffic score" value={tripAnalysis.trafficContext.congestionScore == null ? 'Unavailable' : `${Math.round(tripAnalysis.trafficContext.congestionScore)}/100`} />
+            <AnalysisMetric label="Speed-limit coverage" value={`${Math.round(tripAnalysis.trafficContext.speedLimitCoverage * 100)}%`} />
+            <AnalysisMetric label="Analyzed" value={new Date(tripAnalysis.trafficContext.analyzedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} />
           </CardContent>
         </Card>
       )}
