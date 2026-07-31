@@ -12,7 +12,7 @@
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSRequiresIPhoneOS</key><true/>
-  <key>RoadAnalyzerAPIBaseURL</key><string>https://YOUR-DEPLOYMENT.vercel.app/</string>
+  <key>RoadAnalyzerAPIBaseURL</key><string>https://road-analyzer-pearl.vercel.app/</string>
   <key>NSLocationWhenInUseUsageDescription</key><string>Road Analyzer uses your location to measure traffic speeds while you record a drive.</string>
   <key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>Road Analyzer continues collecting route and speed data during an active drive when the app is in the background.</string>
   <key>NSMotionUsageDescription</key><string>Road Analyzer records motion diagnostics during a traffic drive.</string>

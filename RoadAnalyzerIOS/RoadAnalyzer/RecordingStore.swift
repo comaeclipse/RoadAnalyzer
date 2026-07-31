@@ -11,6 +11,7 @@ final class RecordingStore: NSObject, ObservableObject {
     @Published private(set) var networkType = "offline"
     @Published private(set) var statusMessage = "Ready to record"
     @Published private(set) var pendingUploads = 0
+    @Published private(set) var rejectedUploads = 0
 
     private let locationManager = CLLocationManager()
     private let motionManager = CMMotionManager()
@@ -18,6 +19,7 @@ final class RecordingStore: NSObject, ObservableObject {
     private let persistenceURL: URL
     private var pending: [RecordingSession] = []
     private var isUploading = false
+    private var uploadPassRequested = false
 
     override init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -106,41 +108,65 @@ final class RecordingStore: NSObject, ObservableObject {
         if current.motionSamples.count.isMultiple(of: 50) { persist() }
     }
 
-    private func retryUploads() async {
+    /// Upload everything queued right now, ignoring backoff. Bound to the queue
+    /// indicator so a session parked in the one-hour backoff can be freed by hand.
+    func retryNow() {
+        statusMessage = pendingUploads == 0 ? "Nothing queued to upload" : "Retrying queued uploads"
+        Task { await retryUploads(force: true) }
+    }
+
+    private func retryUploads(force: Bool = false) async {
         // A pending session is only removed once its upload finishes, so a second
         // call arriving mid-flight (a Wi-Fi to cellular switch fires the path
         // handler) would post the same report twice. The flag is read and set
         // without an await in between, so the main actor makes this check atomic.
-        guard networkType != "offline", !isUploading else { return }
+        // A call that loses the race asks for another pass rather than dropping
+        // its work, so a session queued by stop() is never left sitting.
+        guard networkType != "offline" else { return }
+        if isUploading { uploadPassRequested = true; return }
         isUploading = true
         defer { isUploading = false }
-        for index in pending.indices.reversed() {
-            guard pending[index].nextUploadAt.map({ $0 <= .now }) ?? true else { continue }
-            do {
-                try await UploadClient.shared.upload(MobileReport(session: pending[index], authorization: locationStatus))
-                pending.remove(at: index)
-                statusMessage = "Traffic report uploaded"
-            } catch {
-                pending[index].uploadAttempts += 1
-                let delay = min(pow(2, Double(pending[index].uploadAttempts)) * 30, 3600)
-                pending[index].nextUploadAt = Date.now.addingTimeInterval(delay)
-                statusMessage = "Upload queued for retry"
+
+        repeat {
+            uploadPassRequested = false
+            for index in pending.indices.reversed() where pending[index].failedPermanently != true {
+                if !force, let next = pending[index].nextUploadAt, next > .now { continue }
+                do {
+                    try await UploadClient.shared.upload(MobileReport(session: pending[index], authorization: locationStatus))
+                    pending.remove(at: index)
+                    statusMessage = "Traffic report uploaded"
+                } catch UploadError.rejected(let status) {
+                    // Resending an unchanged payload the server refused cannot
+                    // succeed, so stop and keep it on disk for inspection.
+                    pending[index].failedPermanently = true
+                    statusMessage = "Report rejected (HTTP \(status)) and will not retry"
+                } catch {
+                    pending[index].uploadAttempts += 1
+                    let delay = min(pow(2, Double(pending[index].uploadAttempts)) * 30, 3600)
+                    pending[index].nextUploadAt = Date.now.addingTimeInterval(delay)
+                    statusMessage = "Upload queued for retry"
+                }
+                persist()
             }
-            persist()
-        }
+        } while uploadPassRequested
     }
 
     private func persist() {
         let saved = SavedSessions(active: session, pending: pending)
         if let data = try? JSONEncoder.roadAnalyzer.encode(saved) { try? data.write(to: persistenceURL, options: .atomic) }
-        pendingUploads = pending.count
+        refreshCounts()
+    }
+
+    private func refreshCounts() {
+        rejectedUploads = pending.filter { $0.failedPermanently == true }.count
+        pendingUploads = pending.count - rejectedUploads
     }
 
     private func load() {
         guard let data = try? Data(contentsOf: persistenceURL), let saved = try? JSONDecoder.roadAnalyzer.decode(SavedSessions.self, from: data) else { return }
         session = saved.active
         pending = saved.pending
-        pendingUploads = pending.count
+        refreshCounts()
     }
 }
 

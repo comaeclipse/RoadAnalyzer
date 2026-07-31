@@ -1,6 +1,13 @@
 import Foundation
 
-enum UploadError: Error { case missingEndpoint, invalidResponse }
+enum UploadError: Error {
+    case missingEndpoint
+    /// 4xx other than 408/429: the payload itself is unacceptable, so resending
+    /// it unchanged can never succeed. Retrying these forever blocks the queue.
+    case rejected(status: Int)
+    /// Transport failure or 5xx: worth retrying with backoff.
+    case transient
+}
 
 actor UploadClient {
     static let shared = UploadClient()
@@ -15,7 +22,13 @@ actor UploadClient {
         request.timeoutInterval = 60
         request.httpBody = try JSONEncoder.roadAnalyzer.encode(report)
         let (_, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw UploadError.invalidResponse }
+        guard let http = response as? HTTPURLResponse else { throw UploadError.transient }
+        if (200..<300).contains(http.statusCode) { return }
+        // 408 and 429 are 4xx but explicitly worth retrying later.
+        if (400..<500).contains(http.statusCode), http.statusCode != 408, http.statusCode != 429 {
+            throw UploadError.rejected(status: http.statusCode)
+        }
+        throw UploadError.transient
     }
 }
 

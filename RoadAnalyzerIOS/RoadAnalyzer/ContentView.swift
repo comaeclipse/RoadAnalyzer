@@ -25,8 +25,25 @@ struct ContentView: View {
             }
             .padding()
             .navigationTitle("Traffic Recorder")
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Label("\(store.pendingUploads) pending uploads", systemImage: "arrow.up.circle") } }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { queueIndicator } }
         }
+    }
+
+    // A toolbar Label renders icon-only, which hid the queue depth entirely --
+    // the one number that says whether a finished drive actually got off the
+    // phone. Show it, and let a tap bypass the backoff.
+    private var queueIndicator: some View {
+        Button {
+            store.retryNow()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: store.rejectedUploads > 0 ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.up.circle")
+                Text("\(store.pendingUploads)").font(.callout.monospacedDigit().weight(.medium))
+            }
+        }
+        .tint(store.rejectedUploads > 0 ? .orange : (store.pendingUploads > 0 ? .blue : .secondary))
+        .accessibilityLabel("\(store.pendingUploads) uploads queued\(store.rejectedUploads > 0 ? ", \(store.rejectedUploads) rejected" : "")")
+        .accessibilityHint("Retries queued uploads immediately.")
     }
 
     private var statusCard: some View {

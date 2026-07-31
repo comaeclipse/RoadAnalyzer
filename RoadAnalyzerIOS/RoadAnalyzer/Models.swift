@@ -7,6 +7,8 @@ enum TrafficSeverity: String, Codable, CaseIterable {
 }
 
 struct LocationSample: Codable, Identifiable {
+    // Identity is for SwiftUI only. It is deliberately absent from CodingKeys:
+    // the server ignores it, and at ~45 bytes a sample it dominated the payload.
     var id: UUID = UUID()
     let timestamp: Date
     let latitude: Double
@@ -15,6 +17,10 @@ struct LocationSample: Codable, Identifiable {
     let speed: Double?
     let heading: Double?
     let accuracy: Double
+
+    enum CodingKeys: String, CodingKey {
+        case timestamp, latitude, longitude, altitude, speed, heading, accuracy
+    }
 
     init(_ location: CLLocation) {
         timestamp = location.timestamp
@@ -33,6 +39,8 @@ struct MotionSample: Codable, Identifiable {
     let x: Double
     let y: Double
     let z: Double
+
+    enum CodingKeys: String, CodingKey { case timestamp, x, y, z }
 }
 
 struct TrafficEvent: Codable, Identifiable {
@@ -58,6 +66,9 @@ struct RecordingSession: Codable, Identifiable {
     var uploadAttempts: Int
     var nextUploadAt: Date?
     var uploaded: Bool
+    /// Set when the server rejected the payload outright (4xx). Optional so that
+    /// session files written by earlier builds still decode.
+    var failedPermanently: Bool?
 
     init(startedAt: Date = .now, batteryLevel: Float?, networkType: String) {
         id = UUID()
@@ -105,13 +116,26 @@ struct MobileReport: Encodable {
     struct Device: Encodable { let model: String; let osVersion: String }
     struct Diagnostics: Encodable { let batteryLevel: Float?; let networkType: String; let locationAuthorization: String }
 
+    // Mirrors MAX_LOCATION_SAMPLES / MAX_MOTION_SAMPLES in lib/mobile-report.ts.
+    // Motion runs at 10 Hz, so the 72k ceiling is reached after two hours; a
+    // longer drive used to be rejected with a 400 that could never succeed.
+    static let maxLocationSamples = 12_000
+    static let maxMotionSamples = 72_000
+
+    /// Evenly thins `samples` to at most `limit`, preserving span and ordering.
+    private static func thinned<T>(_ samples: [T], to limit: Int) -> [T] {
+        guard samples.count > limit, limit > 0 else { return samples }
+        let step = Double(samples.count) / Double(limit)
+        return (0..<limit).map { samples[min(Int(Double($0) * step), samples.count - 1)] }
+    }
+
     init(session: RecordingSession, authorization: CLAuthorizationStatus) {
         idempotencyKey = session.id.uuidString.lowercased()
         startedAt = Int64(session.startedAt.timeIntervalSince1970 * 1_000)
         endedAt = Int64((session.endedAt ?? .now).timeIntervalSince1970 * 1_000)
         name = "iPhone traffic report"
-        locations = session.locations
-        motionSamples = session.motionSamples
+        locations = Self.thinned(session.locations, to: Self.maxLocationSamples)
+        motionSamples = Self.thinned(session.motionSamples, to: Self.maxMotionSamples)
         device = Device(model: UIDevice.current.model, osVersion: UIDevice.current.systemVersion)
         diagnostics = Diagnostics(batteryLevel: session.batteryLevel, networkType: session.networkType, locationAuthorization: authorization.reportName)
     }
