@@ -38,7 +38,7 @@ export async function GET(
     }
 
     // Fetch GPS, accelerometer, and congestion data in parallel
-    const [gpsData, accelData, congestionEvents] = await Promise.all([
+    const [gpsData, accelData, congestionEvents, analysisRecord] = await Promise.all([
       prisma.gpsSample.findMany({
         where: { driveId: id },
         orderBy: { timestamp: 'asc' },
@@ -47,6 +47,17 @@ export async function GET(
           longitude: true,
           speed: true,
           timestamp: true,
+          segmentMatches: {
+            take: 1,
+            select: {
+              segmentId: true,
+              distance: true,
+              confidence: true,
+              source: true,
+              snappedLatitude: true,
+              snappedLongitude: true,
+            },
+          },
         },
       }),
       prisma.accelerometerSample.findMany({
@@ -73,6 +84,10 @@ export async function GET(
           },
         },
       }),
+      prisma.tripAnalysis.findUnique({
+        where: { driveId: id },
+        include: { maneuvers: { orderBy: { sequence: 'asc' } } },
+      }),
     ]);
 
     // Convert BigInt timestamps to numbers for JSON serialization
@@ -81,6 +96,7 @@ export async function GET(
       lng: point.longitude,
       speed: point.speed,
       timestamp: Number(point.timestamp),
+      match: point.segmentMatches[0] ?? null,
     }));
 
     const accelPoints = accelData.map((point) => ({
@@ -91,7 +107,42 @@ export async function GET(
       timestamp: Number(point.timestamp),
     }));
 
-    return NextResponse.json({ drive, gpsPoints, accelPoints, congestionEvents });
+    const tripAnalysis = analysisRecord ? {
+      status: analysisRecord.status,
+      provider: analysisRecord.provider,
+      providerVersion: analysisRecord.providerVersion,
+      confidence: analysisRecord.confidence,
+      coverage: analysisRecord.coverage,
+      matchedDistance: analysisRecord.matchedDistance,
+      matchedGeometry: analysisRecord.matchedGeometry,
+      netDirection: analysisRecord.netDirection,
+      dominantDirection: analysisRecord.dominantDirection,
+      directionBreakdown: analysisRecord.directionBreakdown,
+      errorCode: analysisRecord.errorCode,
+    } : null;
+    const maneuvers = analysisRecord?.maneuvers.map((maneuver) => ({
+      sequence: maneuver.sequence,
+      type: maneuver.type,
+      modifier: maneuver.modifier,
+      turnType: maneuver.turnType,
+      instruction: maneuver.instruction,
+      fromRoad: maneuver.fromRoad,
+      toRoad: maneuver.toRoad,
+      location: { lat: maneuver.latitude, lng: maneuver.longitude },
+      bearingBefore: maneuver.bearingBefore,
+      bearingAfter: maneuver.bearingAfter,
+      angleDegrees: maneuver.angleDegrees,
+      confidence: maneuver.confidence,
+    })) ?? [];
+
+    return NextResponse.json({
+      drive,
+      gpsPoints,
+      accelPoints,
+      congestionEvents,
+      tripAnalysis,
+      maneuvers,
+    });
   } catch (error) {
     console.error('Failed to fetch recording:', error);
     return NextResponse.json(

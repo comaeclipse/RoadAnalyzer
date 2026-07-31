@@ -12,6 +12,8 @@ export interface GPSData {
   speed: number | null;
   heading: number | null;
   accuracy: number;
+  speedAccuracy?: number | null;
+  courseAccuracy?: number | null;
   timestamp: number;
 }
 

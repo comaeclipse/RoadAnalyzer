@@ -3,9 +3,14 @@ import { DriveSource, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { calculateDistance } from '@/lib/sensor-utils';
 import { validateMobileReport } from '@/lib/mobile-report';
-import { runCongestionAnalysis } from '@/lib/post-processing';
+import {
+  AnalysisBusyError,
+  RetryableAnalysisError,
+  runDriveAnalysis,
+} from '@/lib/trip-analysis';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 180;
 
 export async function POST(request: NextRequest) {
   const contentLength = Number(request.headers.get('content-length') ?? 0);
@@ -18,15 +23,19 @@ export async function POST(request: NextRequest) {
     if (!parsed.valid) return NextResponse.json({ error: parsed.error }, { status: 400 });
     const report = parsed.value;
 
-    const duplicateResponse = async () => {
-      const existing = await prisma.drive.findUnique({ where: { idempotencyKey: report.idempotencyKey } });
-      return existing
-        ? NextResponse.json({ driveId: existing.id, duplicate: true, status: existing.status })
-        : null;
-    };
-
-    const alreadyIngested = await duplicateResponse();
-    if (alreadyIngested) return alreadyIngested;
+    const existing = await prisma.drive.findUnique({
+      where: { idempotencyKey: report.idempotencyKey },
+      include: { tripAnalysis: true },
+    });
+    if (existing?.tripAnalysis &&
+        ['COMPLETED', 'PARTIAL'].includes(existing.tripAnalysis.status)) {
+      return NextResponse.json({
+        driveId: existing.id,
+        duplicate: true,
+        status: existing.status,
+        analysis: existing.tripAnalysis,
+      });
+    }
 
     let distance = 0;
     const gpsData = report.locations.map((point, index) => {
@@ -42,6 +51,8 @@ export async function POST(request: NextRequest) {
         speed: point.speed ?? null,
         heading: point.heading ?? null,
         accuracy: point.accuracy,
+        speedAccuracy: point.speedAccuracy ?? null,
+        courseAccuracy: point.courseAccuracy ?? null,
         timestamp: BigInt(Math.round(point.timestamp)),
         distanceFromPrev,
       };
@@ -84,23 +95,45 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    let drive;
+    let driveId = existing?.id;
+    if (!driveId) {
+      try {
+        driveId = (await createDrive()).id;
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          driveId = (await prisma.drive.findUnique({
+            where: { idempotencyKey: report.idempotencyKey },
+            select: { id: true },
+          }))?.id;
+        }
+        if (!driveId) throw error;
+      }
+    }
+
     try {
-      drive = await createDrive();
+      const analysis = await runDriveAnalysis(driveId);
+      await prisma.drive.update({
+        where: { id: driveId },
+        data: { status: 'COMPLETED', uploadCompletedAt: new Date() },
+      });
+      return NextResponse.json(
+        { driveId, duplicate: Boolean(existing), analysis },
+        { status: existing ? 200 : 201 }
+      );
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        const raced = await duplicateResponse();
-        if (raced) return raced;
+      if (error instanceof AnalysisBusyError || error instanceof RetryableAnalysisError) {
+        return NextResponse.json(
+          {
+            error: 'Trip analysis is temporarily unavailable',
+            driveId,
+            retryable: true,
+            code: error instanceof RetryableAnalysisError ? error.code : 'ANALYSIS_BUSY',
+          },
+          { status: 503 }
+        );
       }
       throw error;
     }
-
-    const analysis = await runCongestionAnalysis(drive.id);
-    await prisma.drive.update({
-      where: { id: drive.id },
-      data: { status: 'COMPLETED', uploadCompletedAt: new Date() },
-    });
-    return NextResponse.json({ driveId: drive.id, duplicate: false, analysis }, { status: 201 });
   } catch (error) {
     console.error('Failed to ingest mobile report:', error);
     return NextResponse.json({ error: 'Failed to ingest mobile report' }, { status: 500 });

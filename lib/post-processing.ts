@@ -10,7 +10,6 @@
  */
 
 import { prisma } from '@/lib/prisma';
-import { matchGpsToSegments, RoadSegmentForMatching } from './segment-matching';
 import { detectCongestion, CongestionEvent as DetectedEvent } from './congestion-detection';
 import { CongestionSeverity } from '@prisma/client';
 
@@ -184,11 +183,7 @@ async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
  *
  * Steps:
  * 1. Fetch GPS samples for the drive
- * 2. Fetch all road segments
- * 3. Match GPS samples to segments
- * 4. Detect congestion events
- * 5. Insert congestion events into database
- * 6. Update segment statistics
+ * GPS-to-segment matches must already have been produced by trip analysis.
  *
  * @param driveId ID of the completed drive
  * @returns Analysis results (match count, event count, total duration)
@@ -196,7 +191,18 @@ async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
 export async function runCongestionAnalysis(
   driveId: string
 ): Promise<CongestionAnalysisResult> {
-  // Step 1: Fetch GPS samples with speed data
+  const existingEvents = await prisma.congestionEvent.findMany({
+    where: { driveId },
+    select: { duration: true },
+  });
+  if (existingEvents.length > 0) {
+    return {
+      matchCount: await prisma.gpsSegmentMatch.count({ where: { gps: { driveId } } }),
+      eventCount: existingEvents.length,
+      totalDuration: existingEvents.reduce((sum, event) => sum + event.duration, 0),
+    };
+  }
+
   const gpsSamples = await prisma.gpsSample.findMany({
     where: { driveId },
     orderBy: { timestamp: 'asc' },
@@ -208,74 +214,22 @@ export async function runCongestionAnalysis(
       speed: true,
       timestamp: true,
       distanceFromPrev: true,
+      segmentMatches: {
+        take: 1,
+        select: { segmentId: true },
+      },
     },
   });
 
-  // If no GPS samples or no segments exist, return early
   if (gpsSamples.length === 0) {
     return { matchCount: 0, eventCount: 0, totalDuration: 0 };
   }
 
-  // Step 2: Fetch all road segments for spatial matching
-  const segments = await prisma.roadSegment.findMany({
-    select: {
-      id: true,
-      geometry: true,
-      minLat: true,
-      maxLat: true,
-      minLon: true,
-      maxLon: true,
-    },
-  });
-
-  // If no segments exist, return early
-  if (segments.length === 0) {
-    return { matchCount: 0, eventCount: 0, totalDuration: 0 };
-  }
-
-  // Step 3: Match GPS samples to segments
-  const matches: { gpsId: string; segmentId: string; distance: number; position: number }[] = [];
-  const gpsWithSegments: Array<{
-    id: string;
-    driveId: string;
-    timestamp: bigint;
-    speed: number | null;
-    distanceFromPrev: number | null;
-    segmentId?: string;
-  }> = [];
-
-  for (const gps of gpsSamples) {
-    const segmentMatches = matchGpsToSegments(
-      { latitude: gps.latitude, longitude: gps.longitude },
-      segments as unknown as RoadSegmentForMatching[]
-    );
-
-    // Use the closest match (first in sorted array)
-    if (segmentMatches.length > 0) {
-      const bestMatch = segmentMatches[0];
-      matches.push({
-        gpsId: gps.id,
-        segmentId: bestMatch.segmentId,
-        distance: bestMatch.distance,
-        position: bestMatch.position,
-      });
-
-      gpsWithSegments.push({
-        ...gps,
-        segmentId: bestMatch.segmentId,
-      });
-    } else {
-      gpsWithSegments.push({ ...gps });
-    }
-  }
-
-  // Bulk insert GPS-segment matches
-  if (matches.length > 0) {
-    await prisma.gpsSegmentMatch.createMany({
-      data: matches,
-      skipDuplicates: true,
-    });
-  }
+  const gpsWithSegments = gpsSamples.map(({ segmentMatches, ...gps }) => ({
+    ...gps,
+    segmentId: segmentMatches[0]?.segmentId,
+  }));
+  const matchCount = gpsWithSegments.filter((sample) => sample.segmentId).length;
 
   // Step 4: Detect congestion events
   const events = detectCongestion(gpsWithSegments);
@@ -307,7 +261,7 @@ export async function runCongestionAnalysis(
   }
 
   return {
-    matchCount: matches.length,
+    matchCount,
     eventCount: events.length,
     totalDuration: events.reduce((sum, e) => sum + e.duration, 0),
   };

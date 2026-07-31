@@ -52,6 +52,17 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
+    const existing = await prisma.roadSegment.findUnique({
+      where: { id: params.id },
+      select: { source: true },
+    });
+    if (!existing) return NextResponse.json({ error: 'Segment not found' }, { status: 404 });
+    if (existing.source === 'MAPBOX') {
+      return NextResponse.json(
+        { error: 'Automatic Mapbox segments are read-only; create a manual override instead' },
+        { status: 409 }
+      );
+    }
     const body = (await request.json()) as UpdateSegmentRequest;
     const { name, description, geometry, roadType } = body;
 
@@ -110,6 +121,17 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const existing = await prisma.roadSegment.findUnique({
+      where: { id: params.id },
+      select: { source: true },
+    });
+    if (!existing) return NextResponse.json({ error: 'Segment not found' }, { status: 404 });
+    if (existing.source === 'MAPBOX') {
+      return NextResponse.json(
+        { error: 'Automatic Mapbox segments cannot be deleted' },
+        { status: 409 }
+      );
+    }
     await prisma.roadSegment.delete({
       where: { id: params.id },
     });

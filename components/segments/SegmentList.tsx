@@ -96,6 +96,12 @@ export function SegmentList({
                               {segment.roadType.toLowerCase()}
                             </Badge>
                           )}
+                          <Badge
+                            variant="outline"
+                            className={`text-xs py-0 ${segment.source === 'MAPBOX' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-violet-200 bg-violet-50 text-violet-700'}`}
+                          >
+                            {segment.source === 'MAPBOX' ? 'automatic' : 'manual'}
+                          </Badge>
                           {segment.eventCount !== undefined && segment.eventCount > 0 && (
                             <span className="text-xs text-gray-400">
                               {segment.eventCount} events

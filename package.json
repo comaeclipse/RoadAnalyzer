@@ -7,6 +7,7 @@
     "build": "prisma generate --no-hints && prisma migrate deploy && next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
     "backfill-roughness": "tsx scripts/backfill-roughness.ts",
     "analyze-data": "tsx scripts/analyze-data.ts"
   },
@@ -18,19 +19,17 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-    "leaflet": "^1.9.4",
     "lucide-react": "^0.555.0",
+    "mapbox-gl": "^3.27.0",
     "next": "^14.2.0",
     "prisma": "^6.19.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-leaflet": "^4.2.1",
     "recharts": "^3.5.0",
     "tailwind-merge": "^3.4.0",
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
-    "@types/leaflet": "^1.9.21",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
@@ -39,6 +38,7 @@
     "eslint-config-next": "14.2.0",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }

@@ -17,9 +17,11 @@ struct LocationSample: Codable, Identifiable {
     let speed: Double?
     let heading: Double?
     let accuracy: Double
+    let speedAccuracy: Double?
+    let courseAccuracy: Double?
 
     enum CodingKeys: String, CodingKey {
-        case timestamp, latitude, longitude, altitude, speed, heading, accuracy
+        case timestamp, latitude, longitude, altitude, speed, heading, accuracy, speedAccuracy, courseAccuracy
     }
 
     init(_ location: CLLocation) {
@@ -30,6 +32,8 @@ struct LocationSample: Codable, Identifiable {
         speed = location.speed >= 0 ? location.speed : nil
         heading = location.course >= 0 ? location.course : nil
         accuracy = location.horizontalAccuracy
+        speedAccuracy = location.speedAccuracy >= 0 ? location.speedAccuracy : nil
+        courseAccuracy = location.courseAccuracy >= 0 ? location.courseAccuracy : nil
     }
 }
 
@@ -102,7 +106,7 @@ extension CLAuthorizationStatus {
 // Encode-only: the wire format is written by UploadClient and never read back,
 // so the defaulted version constants below need no decoding support.
 struct MobileReport: Encodable {
-    let schemaVersion = "1"
+    let schemaVersion = "2"
     let idempotencyKey: String
     let startedAt: Int64
     let endedAt: Int64

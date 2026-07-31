@@ -11,23 +11,23 @@ datasource db {
 }
 
 model Drive {
-  id          String   @id @default(cuid())
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Session metadata
-  startTime   DateTime
-  endTime     DateTime?
-  status      DriveStatus @default(RECORDING)
-  recordingMode RecordingMode @default(ROAD_QUALITY)
-  source        DriveSource @default(WEB)
-  idempotencyKey String? @unique
-  appSchemaVersion String?
+  startTime              DateTime
+  endTime                DateTime?
+  status                 DriveStatus   @default(RECORDING)
+  recordingMode          RecordingMode @default(ROAD_QUALITY)
+  source                 DriveSource   @default(WEB)
+  idempotencyKey         String?       @unique
+  appSchemaVersion       String?
   trafficAnalysisVersion String?
-  deviceModel String?
-  osVersion String?
-  uploadCompletedAt DateTime?
-  diagnostics Json?
+  deviceModel            String?
+  osVersion              String?
+  uploadCompletedAt      DateTime?
+  diagnostics            Json?
 
   // User-defined metadata
   name        String?
@@ -35,20 +35,21 @@ model Drive {
   tags        String[]
 
   // Calculated statistics (updated on endDrive)
-  duration    Int?      // milliseconds
-  distance    Float?    // meters
-  maxSpeed    Float?    // m/s
-  avgSpeed    Float?    // m/s
-  sampleCount Int       @default(0)
+  duration    Int? // milliseconds
+  distance    Float? // meters
+  maxSpeed    Float? // m/s
+  avgSpeed    Float? // m/s
+  sampleCount Int    @default(0)
 
   // Road roughness analysis
-  roughnessScore     Float?  // 0-100 (100 = smoothest)
-  roughnessBreakdown Json?   // { smooth: %, light: %, moderate: %, rough: %, veryRough: % }
+  roughnessScore     Float? // 0-100 (100 = smoothest)
+  roughnessBreakdown Json? // { smooth: %, light: %, moderate: %, rough: %, veryRough: % }
 
   // Relations
   accelerometerData AccelerometerSample[]
   gpsData           GpsSample[]
   congestionEvents  CongestionEvent[]
+  tripAnalysis      TripAnalysis?
 
   @@index([createdAt(sort: Desc)])
   @@index([status])
@@ -61,8 +62,8 @@ enum DriveStatus {
 }
 
 enum RecordingMode {
-  ROAD_QUALITY    // Analyze road surface conditions using accelerometer
-  TRAFFIC         // Analyze traffic/congestion patterns using GPS speed
+  ROAD_QUALITY // Analyze road surface conditions using accelerometer
+  TRAFFIC // Analyze traffic/congestion patterns using GPS speed
 }
 
 enum DriveSource {
@@ -71,39 +72,41 @@ enum DriveSource {
 }
 
 model AccelerometerSample {
-  id        String   @id @default(cuid())
-  driveId   String
-  drive     Drive    @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  driveId String
+  drive   Drive  @relation(fields: [driveId], references: [id], onDelete: Cascade)
 
   // Raw sensor data
   x         Float
   y         Float
   z         Float
-  timestamp BigInt   // Milliseconds since epoch
+  timestamp BigInt // Milliseconds since epoch
 
   // Calculated (denormalized for query performance)
-  magnitude Float    // sqrt(x^2 + y^2 + z^2)
+  magnitude Float // sqrt(x^2 + y^2 + z^2)
 
   @@index([driveId, timestamp])
   @@index([timestamp])
 }
 
 model GpsSample {
-  id        String   @id @default(cuid())
-  driveId   String
-  drive     Drive    @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  driveId String
+  drive   Drive  @relation(fields: [driveId], references: [id], onDelete: Cascade)
 
   // GPS data
-  latitude  Float
-  longitude Float
-  altitude  Float?
-  speed     Float?   // m/s
-  heading   Float?   // degrees (0-360)
-  accuracy  Float    // meters
-  timestamp BigInt   // Milliseconds since epoch
+  latitude       Float
+  longitude      Float
+  altitude       Float?
+  speed          Float? // m/s
+  heading        Float? // degrees (0-360)
+  accuracy       Float // meters
+  speedAccuracy  Float?
+  courseAccuracy Float?
+  timestamp      BigInt // Milliseconds since epoch
 
   // Calculated (denormalized)
-  distanceFromPrev Float?  // meters from previous point
+  distanceFromPrev Float? // meters from previous point
 
   // Relations
   segmentMatches GpsSegmentMatch[]
@@ -114,33 +117,35 @@ model GpsSample {
 
 // Road Segment: Defines a geographic road section for grouping GPS data
 model RoadSegment {
-  id          String   @id @default(cuid())
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Segment identification
   name        String
   description String?
 
   // Geometry (GeoJSON LineString)
-  geometry    Json     // { type: "LineString", coordinates: [[lng, lat], ...] }
+  geometry Json // { type: "LineString", coordinates: [[lng, lat], ...] }
 
   // Bounding box for quick spatial filtering
-  minLat      Float
-  maxLat      Float
-  minLon      Float
-  maxLon      Float
+  minLat Float
+  maxLat Float
+  minLon Float
+  maxLon Float
 
   // Metadata
-  roadType    RoadType?
-  source      SegmentSource @default(MANUAL)
-  sourceId    String?      // OSM way ID if imported
+  roadType RoadType?
+  source   SegmentSource @default(MANUAL)
+  sourceId String? // OSM way ID if imported
+  isActive Boolean       @default(true)
 
   // Relations
   congestionEvents  CongestionEvent[]
   segmentStats      SegmentStatistics[]
   gpsSegmentMatches GpsSegmentMatch[]
 
+  @@unique([source, sourceId])
   @@index([minLat, maxLat, minLon, maxLon])
   @@index([name])
 }
@@ -157,61 +162,138 @@ enum SegmentSource {
   MANUAL
   OSM_IMPORT
   AUTO_DETECTED
+  MAPBOX
+}
+
+enum SegmentMatchSource {
+  MAPBOX
+  MANUAL_OVERRIDE
+  MANUAL_FALLBACK
 }
 
 // Junction table: Links GPS samples to road segments
 model GpsSegmentMatch {
-  id        String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  gpsId     String
-  gps       GpsSample @relation(fields: [gpsId], references: [id], onDelete: Cascade)
+  gpsId String
+  gps   GpsSample @relation(fields: [gpsId], references: [id], onDelete: Cascade)
 
   segmentId String
   segment   RoadSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
 
   // Distance from GPS point to segment centerline (meters)
-  distance  Float
+  distance Float
 
   // Position along segment (0.0 to 1.0, where 0 is start, 1 is end)
-  position  Float
+  position         Float
+  snappedLatitude  Float?
+  snappedLongitude Float?
+  confidence       Float?
+  source           SegmentMatchSource @default(MAPBOX)
 
+  @@unique([gpsId, segmentId])
   @@index([gpsId])
   @@index([segmentId, gpsId])
-  @@unique([gpsId, segmentId])
+}
+
+enum TripAnalysisStatus {
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum CardinalDirection {
+  NORTH
+  NORTHEAST
+  EAST
+  SOUTHEAST
+  SOUTH
+  SOUTHWEST
+  WEST
+  NORTHWEST
+}
+
+model TripAnalysis {
+  id                 String             @id @default(cuid())
+  driveId            String             @unique
+  drive              Drive              @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  status             TripAnalysisStatus @default(PROCESSING)
+  provider           String             @default("mapbox")
+  providerVersion    String             @default("v5")
+  matchedGeometry    Json?
+  matchedDistance    Float?
+  confidence         Float?
+  coverage           Float              @default(0)
+  matchedPointCount  Int                @default(0)
+  totalPointCount    Int                @default(0)
+  netDirection       CardinalDirection?
+  dominantDirection  CardinalDirection?
+  directionBreakdown Json?
+  errorCode          String?
+  errorMessage       String?
+  startedAt          DateTime           @default(now())
+  completedAt        DateTime?
+  updatedAt          DateTime           @updatedAt
+  maneuvers          Maneuver[]
+
+  @@index([status, updatedAt])
+}
+
+model Maneuver {
+  id             String       @id @default(cuid())
+  tripAnalysisId String
+  tripAnalysis   TripAnalysis @relation(fields: [tripAnalysisId], references: [id], onDelete: Cascade)
+  sequence       Int
+  type           String
+  modifier       String?
+  turnType       String
+  instruction    String
+  fromRoad       String?
+  toRoad         String?
+  latitude       Float
+  longitude      Float
+  bearingBefore  Float?
+  bearingAfter   Float?
+  angleDegrees   Float?
+  confidence     Float?
+
+  @@unique([tripAnalysisId, sequence])
+  @@index([tripAnalysisId])
 }
 
 // Congestion Event: A detected period of congestion during a drive
 model CongestionEvent {
-  id          String   @id @default(cuid())
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
 
   // References
-  driveId     String
-  drive       Drive @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  driveId String
+  drive   Drive  @relation(fields: [driveId], references: [id], onDelete: Cascade)
 
-  segmentId   String
-  segment     RoadSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  segmentId String
+  segment   RoadSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
 
   // Temporal data
-  startTime   DateTime
-  endTime     DateTime
-  duration    Int          // milliseconds
+  startTime DateTime
+  endTime   DateTime
+  duration  Int // milliseconds
 
   // Derived temporal fields for querying
-  dayOfWeek   Int          // 0 (Sunday) to 6 (Saturday)
-  hourOfDay   Int          // 0-23
-  weekOfYear  Int          // ISO week number
+  dayOfWeek  Int // 0 (Sunday) to 6 (Saturday)
+  hourOfDay  Int // 0-23
+  weekOfYear Int // ISO week number
 
   // Congestion metrics
-  severity    CongestionSeverity
-  avgSpeed    Float        // m/s during event
-  minSpeed    Float        // m/s
-  maxSpeed    Float        // m/s
-  distance    Float        // meters traveled during event
+  severity CongestionSeverity
+  avgSpeed Float // m/s during event
+  minSpeed Float // m/s
+  maxSpeed Float // m/s
+  distance Float // meters traveled during event
 
   // GPS samples involved (for detailed analysis)
-  startGpsId  String?
-  endGpsId    String?
+  startGpsId String?
+  endGpsId   String?
 
   @@index([driveId])
   @@index([segmentId, startTime])
@@ -229,30 +311,30 @@ enum CongestionSeverity {
 
 // Pre-aggregated statistics for a segment (materialized view pattern)
 model SegmentStatistics {
-  id          String   @id @default(cuid())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(cuid())
+  updatedAt DateTime @updatedAt
 
-  segmentId   String
-  segment     RoadSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  segmentId String
+  segment   RoadSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
 
   // Time window (null = all-time aggregate)
-  dayOfWeek   Int?         // 0-6, null for all days
-  hourOfDay   Int?         // 0-23, null for all hours
-  weekStart   DateTime?    // For weekly trends
+  dayOfWeek Int? // 0-6, null for all days
+  hourOfDay Int? // 0-23, null for all hours
+  weekStart DateTime? // For weekly trends
 
   // Aggregate metrics
-  sampleCount       Int @default(0)
-  eventCount        Int @default(0)
-  totalDuration     Int @default(0)  // Total congestion time (ms)
-  avgSpeed          Float?
-  avgCongestionSpeed Float?          // Avg speed during congestion only
+  sampleCount        Int    @default(0)
+  eventCount         Int    @default(0)
+  totalDuration      Int    @default(0) // Total congestion time (ms)
+  avgSpeed           Float?
+  avgCongestionSpeed Float? // Avg speed during congestion only
 
   // Severity breakdown (% of time in each state)
-  pctFreeFlow   Float @default(0)
-  pctSlow       Float @default(0)
-  pctCongested  Float @default(0)
-  pctHeavy      Float @default(0)
-  pctGridlock   Float @default(0)
+  pctFreeFlow  Float @default(0)
+  pctSlow      Float @default(0)
+  pctCongested Float @default(0)
+  pctHeavy     Float @default(0)
+  pctGridlock  Float @default(0)
 
   // Congestion score (0-100, where 0 = always congested, 100 = always free-flow)
   congestionScore Float?

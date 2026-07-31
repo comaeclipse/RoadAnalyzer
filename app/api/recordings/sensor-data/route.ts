@@ -110,6 +110,8 @@ export async function POST(request: NextRequest) {
           speed: s.speed ?? null,
           heading: s.heading ?? null,
           accuracy: s.accuracy,
+          speedAccuracy: s.speedAccuracy ?? null,
+          courseAccuracy: s.courseAccuracy ?? null,
           timestamp: BigInt(s.timestamp),
           distanceFromPrev,
         };

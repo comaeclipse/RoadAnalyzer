@@ -180,7 +180,7 @@ extension RecordingStore: CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         let samples = locations
-            .filter { $0.horizontalAccuracy >= 0 && $0.horizontalAccuracy <= 100 }
+            .filter { $0.horizontalAccuracy >= 0 && $0.horizontalAccuracy <= 50 }
             .map(LocationSample.init)
         guard !samples.isEmpty else { return }
         Task { @MainActor [weak self] in self?.append(samples) }

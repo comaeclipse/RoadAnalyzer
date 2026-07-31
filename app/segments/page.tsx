@@ -196,7 +196,7 @@ export default function SegmentsPage() {
                 <Plus className="w-4 h-4" />
                 Draw Segment
               </Button>
-              {selectedSegmentId && (
+              {selectedSegment?.source === 'MANUAL' && (
                 <Button
                   variant="outline"
                   size="sm"

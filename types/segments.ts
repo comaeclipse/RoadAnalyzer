@@ -32,6 +32,7 @@ export interface RoadSegmentResponse {
   roadType: RoadType | null;
   source: SegmentSource;
   sourceId: string | null;
+  isActive: boolean;
   eventCount?: number;
 }
 

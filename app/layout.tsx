@@ -1,9 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import "mapbox-gl/dist/mapbox-gl.css";
 import { SensorProvider } from "@/components/providers/SensorProvider";
 import { RecordingProvider } from "@/components/providers/RecordingProvider";
-import Script from "next/script";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -27,9 +27,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <head>
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-      </head>
       <body className={inter.className}>
         <SensorProvider>
           <RecordingProvider>{children}</RecordingProvider>

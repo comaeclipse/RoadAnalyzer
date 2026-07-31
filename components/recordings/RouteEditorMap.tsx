@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, useMap } from 'react-leaflet';
-import L from 'leaflet';
+import { useEffect, useRef } from 'react';
+import mapboxgl from 'mapbox-gl';
 
 export type EditMode = 'individual' | 'moveAll';
 
@@ -12,114 +11,93 @@ interface RouteEditorMapProps {
   editMode: EditMode;
 }
 
-const editPointIcon = new L.DivIcon({
-  className: 'edit-point',
-  html: '<div style="width: 10px; height: 10px; background: #111827; border: 2px solid white; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.3); cursor: grab;"></div>',
-  iconSize: [10, 10],
-  iconAnchor: [5, 5],
-});
-
-const moveAllPointIcon = new L.DivIcon({
-  className: 'move-all-point',
-  html: '<div style="width: 10px; height: 10px; background: #2563eb; border: 2px solid white; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.3); cursor: move;"></div>',
-  iconSize: [10, 10],
-  iconAnchor: [5, 5],
-});
-
-function FitBounds({ points }: { points: { lat: number; lng: number }[] }) {
-  const map = useMap();
-  useEffect(() => {
-    if (!points.length) return;
-    const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng] as [number, number]));
-    map.fitBounds(bounds, { padding: [40, 40] });
-  }, [map, points]);
-  return null;
-}
-
 export function RouteEditorMap({ points, onChange, editMode }: RouteEditorMapProps) {
-  const [localPoints, setLocalPoints] = useState(points);
-  const dragStartRef = useRef<{ lat: number; lng: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
   useEffect(() => {
-    setLocalPoints(points);
-  }, [points]);
+    if (!containerRef.current || !token) return;
+    mapboxgl.accessToken = token;
+    const map = new mapboxgl.Map({
+      container: containerRef.current,
+      style: 'mapbox://styles/mapbox/light-v11',
+      center: points[0] ? [points[0].lng, points[0].lat] : [-87.2169, 30.4213],
+      zoom: 15,
+    });
+    map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    const mutable = points.map((point) => ({ ...point }));
+    const markers: mapboxgl.Marker[] = [];
 
-  const positions = useMemo(
-    () => localPoints.map((p) => [p.lat, p.lng] as [number, number]),
-    [localPoints]
-  );
-
-  // Individual point drag
-  const handleDragEnd = (idx: number, latlng: L.LatLng) => {
-    if (editMode === 'individual') {
-      setLocalPoints((prev) => {
-        const updated = [...prev];
-        updated[idx] = { lat: latlng.lat, lng: latlng.lng };
-        onChange(updated);
-        return updated;
+    const updateLine = () => {
+      const source = map.getSource('route') as mapboxgl.GeoJSONSource | undefined;
+      source?.setData({
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'LineString', coordinates: mutable.map((point) => [point.lng, point.lat]) },
       });
-    }
-  };
+    };
 
-  // Move all: track start position
-  const handleDragStart = (idx: number, latlng: L.LatLng) => {
-    if (editMode === 'moveAll') {
-      dragStartRef.current = { lat: latlng.lat, lng: latlng.lng };
-    }
-  };
-
-  // Move all: apply delta to all points
-  const handleMoveAllDragEnd = (idx: number, latlng: L.LatLng) => {
-    if (editMode === 'moveAll' && dragStartRef.current) {
-      const deltaLat = latlng.lat - dragStartRef.current.lat;
-      const deltaLng = latlng.lng - dragStartRef.current.lng;
-      setLocalPoints((prev) => {
-        const updated = prev.map((p) => ({
-          lat: p.lat + deltaLat,
-          lng: p.lng + deltaLng,
-        }));
-        onChange(updated);
-        return updated;
+    map.on('load', () => {
+      map.addSource('route', {
+        type: 'geojson',
+        data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: mutable.map((point) => [point.lng, point.lat]) } },
       });
-      dragStartRef.current = null;
-    }
-  };
+      map.addLayer({
+        id: 'route',
+        type: 'line',
+        source: 'route',
+        paint: { 'line-color': editMode === 'moveAll' ? '#2563eb' : '#111827', 'line-width': 4 },
+      });
 
-  const center: [number, number] =
-    positions.length > 0 ? positions[0] : [30.4213, -87.2169]; // Pensacola default
+      mutable.forEach((point, index) => {
+        let dragStart = { ...point };
+        const element = document.createElement('div');
+        element.style.cssText = `width:12px;height:12px;border-radius:50%;background:${editMode === 'moveAll' ? '#2563eb' : '#111827'};border:2px solid white;box-shadow:0 1px 3px #0006;`;
+        const marker = new mapboxgl.Marker({ element, draggable: true })
+          .setLngLat([point.lng, point.lat])
+          .on('dragstart', () => {
+            const position = marker.getLngLat();
+            dragStart = { lat: position.lat, lng: position.lng };
+          })
+          .on('drag', () => {
+            const position = marker.getLngLat();
+            if (editMode === 'individual') {
+              mutable[index] = { lat: position.lat, lng: position.lng };
+              updateLine();
+            }
+          })
+          .on('dragend', () => {
+            const position = marker.getLngLat();
+            if (editMode === 'moveAll') {
+              const deltaLat = position.lat - dragStart.lat;
+              const deltaLng = position.lng - dragStart.lng;
+              mutable.forEach((item, itemIndex) => {
+                mutable[itemIndex] = { lat: item.lat + deltaLat, lng: item.lng + deltaLng };
+                markers[itemIndex].setLngLat([mutable[itemIndex].lng, mutable[itemIndex].lat]);
+              });
+            } else {
+              mutable[index] = { lat: position.lat, lng: position.lng };
+            }
+            updateLine();
+            onChangeRef.current(mutable.map((item) => ({ ...item })));
+          })
+          .addTo(map);
+        markers.push(marker);
+      });
 
-  const icon = editMode === 'moveAll' ? moveAllPointIcon : editPointIcon;
-  const lineColor = editMode === 'moveAll' ? '#2563eb' : '#111827';
+      if (mutable.length) {
+        const bounds = new mapboxgl.LngLatBounds();
+        mutable.forEach((point) => bounds.extend([point.lng, point.lat]));
+        map.fitBounds(bounds, { padding: 40, maxZoom: 17, duration: 0 });
+      }
+    });
+    return () => map.remove();
+  }, [editMode, points, token]);
 
-  return (
-    <div className="h-[420px] w-full overflow-hidden rounded-lg border border-gray-200">
-      <MapContainer center={center} zoom={15} style={{ height: '100%', width: '100%' }} scrollWheelZoom={true}>
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        <FitBounds points={localPoints} />
-
-        {positions.length > 0 && (
-          <Polyline positions={positions} color={lineColor} weight={4} opacity={0.85} />
-        )}
-
-        {positions.map((pos, idx) => (
-          <Marker
-            key={idx}
-            position={pos}
-            icon={icon}
-            draggable
-            eventHandlers={{
-              dragstart: (e) => handleDragStart(idx, e.target.getLatLng()),
-              dragend: (e) =>
-                editMode === 'moveAll'
-                  ? handleMoveAllDragEnd(idx, e.target.getLatLng())
-                  : handleDragEnd(idx, e.target.getLatLng()),
-            }}
-          />
-        ))}
-      </MapContainer>
-    </div>
-  );
+  if (!token) {
+    return <div className="flex h-[420px] items-center justify-center rounded-lg border bg-amber-50 text-sm text-amber-800">Configure NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN to edit routes.</div>;
+  }
+  return <div ref={containerRef} className="h-[420px] w-full overflow-hidden rounded-lg border border-gray-200" />;
 }

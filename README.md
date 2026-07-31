@@ -19,7 +19,7 @@ Completed iPhone sessions upload to `POST /api/mobile-reports`. The endpoint is 
 
 - **Numeric View**: Live sensor values with color-coded displays
 - **Charts View**: Time-series graphs for accelerometer and speed data
-- **Map View**: Interactive OpenStreetMap with live position tracking and path history
+- **Map View**: Interactive Mapbox maps with live position tracking, raw traces, and matched routes
 
 ### Drive Recording & Playback
 
@@ -39,7 +39,8 @@ Completed iPhone sessions upload to `POST /api/mobile-reports`. The endpoint is 
 
 - GPS-based speed monitoring
 - Congestion severity levels: Free Flow, Slow, Congested, Heavy, Gridlock
-- Road segment matching using Turf.js geospatial algorithms
+- Trace-level Mapbox road matching with OpenLR-backed segment identity
+- Net/dominant direction analysis and named turn maneuvers
 - Pre-aggregated statistics by time of day and day of week
 - Heatmap visualization of congestion hotspots
 
@@ -48,7 +49,7 @@ Completed iPhone sessions upload to `POST /api/mobile-reports`. The endpoint is 
 - **Framework**: Next.js 14 (App Router)
 - **Database**: PostgreSQL (Neon) with Prisma ORM
 - **UI**: Tailwind CSS + shadcn/ui components
-- **Maps**: Leaflet + React-Leaflet + OpenStreetMap
+- **Maps**: Mapbox GL JS
 - **Charts**: Recharts
 - **Geospatial**: Turf.js
 - **Deployment**: Vercel
@@ -85,6 +86,8 @@ npm run dev
 
 ```env
 DATABASE_URL="postgresql://user:password@host:5432/database?sslmode=require"
+MAPBOX_ACCESS_TOKEN="pk.server-token-with-navigation-scope"
+NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN="pk.public-url-restricted-token"
 ```
 
 ## Project Structure
@@ -131,6 +134,8 @@ DATABASE_URL="postgresql://user:password@host:5432/database?sslmode=require"
 - **AccelerometerSample**: X, Y, Z axis readings with magnitude
 - **GpsSample**: Location, speed, heading, altitude data
 - **RoadSegment**: Geographic road sections (GeoJSON LineString)
+- **TripAnalysis**: Mapbox-matched geometry, coverage, confidence, and directional summary
+- **Maneuver**: Ordered named turns, ramps, forks, merges, and roundabouts
 - **CongestionEvent**: Detected traffic slowdowns with severity
 - **SegmentStatistics**: Pre-aggregated stats by time windows
 
@@ -237,7 +242,7 @@ Key constants in `lib/constants.ts`:
 - Look for errors in browser console
 
 **Map not rendering:**
-- Verify Leaflet CSS is loaded
+- Verify `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` is configured and URL-restricted for the deployment
 - Check for JavaScript errors in console
 - Ensure GPS permissions are granted
 

@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
         roadType: true,
         source: true,
         sourceId: true,
+        isActive: true,
         _count: {
           select: {
             congestionEvents: true,

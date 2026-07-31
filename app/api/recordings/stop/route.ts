@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { StopRecordingRequest } from '@/types/recordings';
 import { analyzeRoughness } from '@/lib/roughness';
-import { runCongestionAnalysis } from '@/lib/post-processing';
+import {
+  AnalysisBusyError,
+  RetryableAnalysisError,
+  runDriveAnalysis,
+} from '@/lib/trip-analysis';
+
+export const maxDuration = 180;
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,7 +23,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch GPS and accelerometer data to calculate statistics
-    const [gpsData, accelData] = await Promise.all([
+    const [existingDrive, gpsData, accelData] = await Promise.all([
+      prisma.drive.findUnique({ where: { id: driveId }, select: { recordingMode: true } }),
       prisma.gpsSample.findMany({
         where: { driveId },
         orderBy: { timestamp: 'asc' },
@@ -70,10 +77,28 @@ export async function POST(request: NextRequest) {
       timestamp: Number(s.timestamp),
     }));
 
-    const roughnessResult = analyzeRoughness(accelSamples);
+    const roughnessResult = existingDrive?.recordingMode === 'ROAD_QUALITY'
+      ? analyzeRoughness(accelSamples)
+      : null;
 
     // Run congestion analysis
-    const congestionResult = await runCongestionAnalysis(driveId);
+    let analysis;
+    try {
+      analysis = await runDriveAnalysis(driveId);
+    } catch (error) {
+      if (error instanceof AnalysisBusyError || error instanceof RetryableAnalysisError) {
+        return NextResponse.json(
+          {
+            error: 'Trip analysis is temporarily unavailable',
+            driveId,
+            retryable: true,
+            code: error instanceof RetryableAnalysisError ? error.code : 'ANALYSIS_BUSY',
+          },
+          { status: 503 }
+        );
+      }
+      throw error;
+    }
 
     // Update drive with final statistics
     const drive = await prisma.drive.update({
@@ -91,7 +116,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ drive });
+    return NextResponse.json({ drive, analysis });
   } catch (error) {
     console.error('Failed to stop recording:', error);
     return NextResponse.json(

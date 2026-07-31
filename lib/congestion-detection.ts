@@ -166,71 +166,41 @@ export function detectCongestion(
   thresholds: CongestionThresholds = DEFAULT_THRESHOLDS
 ): CongestionEvent[] {
   const events: CongestionEvent[] = [];
+  const sorted = [...gpsSamples].sort((a, b) => Number(a.timestamp - b.timestamp));
+  let eventStart: GpsSampleWithSegment | null = null;
+  let eventSamples: GpsSampleWithSegment[] = [];
+  let eventSegmentId: string | null = null;
+  let previous: GpsSampleWithSegment | null = null;
 
-  // Group samples by segment
-  const bySegment = new Map<string, GpsSampleWithSegment[]>();
-  for (const sample of gpsSamples) {
-    if (!sample.segmentId) continue;
-
-    if (!bySegment.has(sample.segmentId)) {
-      bySegment.set(sample.segmentId, []);
+  const flush = () => {
+    if (eventStart && eventSegmentId && eventSamples.length > 0) {
+      const event = finalizeEvent(eventSegmentId, eventStart, eventSamples, thresholds);
+      if (event) events.push(event);
     }
-    bySegment.get(sample.segmentId)!.push(sample);
-  }
+    eventStart = null;
+    eventSamples = [];
+    eventSegmentId = null;
+  };
 
-  // Process each segment
-  for (const [segmentId, samples] of Array.from(bySegment.entries())) {
-    // Sort by timestamp
-    const sorted = samples.sort((a, b) => {
-      const aTime = Number(a.timestamp);
-      const bTime = Number(b.timestamp);
-      return aTime - bTime;
-    });
+  for (const sample of sorted) {
+    const gap = previous ? Number(sample.timestamp - previous.timestamp) : 0;
+    const boundary = !sample.segmentId ||
+      (eventSegmentId != null && sample.segmentId !== eventSegmentId) ||
+      gap > 15_000;
+    if (boundary) flush();
 
-    let eventStart: GpsSampleWithSegment | null = null;
-    let eventSamples: GpsSampleWithSegment[] = [];
-
-    for (let i = 0; i < sorted.length; i++) {
-      const sample = sorted[i];
-      const speed = sample.speed ?? 0;
-
-      if (speed < thresholds.freeFlowSpeed) {
-        // Potential congestion
-        if (!eventStart) {
-          eventStart = sample;
-        }
-        eventSamples.push(sample);
-      } else {
-        // Free-flowing again
-        if (eventStart && eventSamples.length > 0) {
-          const event = finalizeEvent(
-            segmentId,
-            eventStart,
-            eventSamples,
-            thresholds
-          );
-          if (event) {
-            events.push(event);
-          }
-        }
-        eventStart = null;
-        eventSamples = [];
+    if (sample.segmentId && (sample.speed ?? 0) < thresholds.freeFlowSpeed) {
+      if (!eventStart) {
+        eventStart = sample;
+        eventSegmentId = sample.segmentId;
       }
+      eventSamples.push(sample);
+    } else {
+      flush();
     }
-
-    // Handle final event if still ongoing at end of drive
-    if (eventStart && eventSamples.length > 0) {
-      const event = finalizeEvent(
-        segmentId,
-        eventStart,
-        eventSamples,
-        thresholds
-      );
-      if (event) {
-        events.push(event);
-      }
-    }
+    previous = sample;
   }
+  flush();
 
   return events;
 }

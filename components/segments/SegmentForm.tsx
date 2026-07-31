@@ -33,6 +33,7 @@ export function SegmentForm({
   onCancel,
   isSaving,
 }: SegmentFormProps) {
+  const isAutomatic = segment?.source === 'MAPBOX';
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [roadType, setRoadType] = useState('');
@@ -96,6 +97,7 @@ export function SegmentForm({
             className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400"
             placeholder="e.g., Main Street North"
             required
+            disabled={isAutomatic}
           />
         </div>
 
@@ -130,6 +132,7 @@ export function SegmentForm({
             rows={2}
             className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400 resize-none"
             placeholder="Optional notes..."
+            disabled={isAutomatic}
           />
         </div>
 
@@ -152,7 +155,13 @@ export function SegmentForm({
         )}
 
         {/* Actions */}
+        {isAutomatic && (
+          <p className="rounded-md bg-blue-50 p-2 text-xs text-blue-700">
+            This road edge is maintained from Mapbox matching. Draw a manual segment to override it.
+          </p>
+        )}
         <div className="flex gap-2 pt-2">
+          {!isAutomatic && (
           <Button
             type="submit"
             size="sm"
@@ -161,6 +170,7 @@ export function SegmentForm({
           >
             {isSaving ? 'Saving...' : 'Save'}
           </Button>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -174,7 +184,7 @@ export function SegmentForm({
         </div>
 
         {/* Delete (only for existing segments) */}
-        {segment && !isNewSegment && (
+        {segment && !isNewSegment && !isAutomatic && (
           <div className="pt-2 border-t border-gray-200">
             {!showDeleteConfirm ? (
               <Button

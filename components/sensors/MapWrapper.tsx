@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
-// Dynamic import to prevent SSR issues with Leaflet
+// Dynamic import to prevent browser map initialization during SSR.
 const MapDisplay = dynamic(
   () => import('./MapDisplay').then((mod) => ({ default: mod.MapDisplay })),
   {

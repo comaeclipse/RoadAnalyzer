@@ -19,7 +19,7 @@ actor UploadClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
+        request.timeoutInterval = 180
         request.httpBody = try JSONEncoder.roadAnalyzer.encode(report)
         let (_, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw UploadError.transient }

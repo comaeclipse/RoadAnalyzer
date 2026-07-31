@@ -79,6 +79,29 @@ interface AccelPoint {
   timestamp: number;
 }
 
+interface TripAnalysis {
+  status: 'PROCESSING' | 'COMPLETED' | 'PARTIAL' | 'FAILED';
+  provider: string;
+  confidence: number | null;
+  coverage: number;
+  matchedDistance: number | null;
+  matchedGeometry: GeoJSON.LineString | null;
+  netDirection: string | null;
+  dominantDirection: string | null;
+  directionBreakdown: Record<string, number> | null;
+  errorCode: string | null;
+}
+
+interface Maneuver {
+  sequence: number;
+  turnType: string;
+  instruction: string;
+  fromRoad: string | null;
+  toRoad: string | null;
+  angleDegrees: number | null;
+  confidence: number | null;
+}
+
 function getRoughnessLabel(score: number): string {
   if (score >= 90) return 'Excellent';
   if (score >= 75) return 'Good';
@@ -143,6 +166,8 @@ export default function RecordingDetailPage() {
   const [gpsPoints, setGpsPoints] = useState<GpsPoint[]>([]);
   const [accelPoints, setAccelPoints] = useState<AccelPoint[]>([]);
   const [congestionEvents, setCongestionEvents] = useState<CongestionEvent[]>([]);
+  const [tripAnalysis, setTripAnalysis] = useState<TripAnalysis | null>(null);
+  const [maneuvers, setManeuvers] = useState<Maneuver[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -174,6 +199,8 @@ export default function RecordingDetailPage() {
         setGpsPoints(data.gpsPoints);
         setAccelPoints(data.accelPoints || []);
         setCongestionEvents(data.congestionEvents || []);
+        setTripAnalysis(data.tripAnalysis || null);
+        setManeuvers(data.maneuvers || []);
       } catch (err) {
         setError('Failed to load recording');
         console.error(err);
@@ -381,6 +408,46 @@ export default function RecordingDetailPage() {
         </div>
       </div>
 
+      {tripAnalysis && (
+        <Card className="mb-6 border-blue-200 bg-blue-50/40">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">Map-matched trip analysis</CardTitle>
+              <Badge variant="outline" className={
+                tripAnalysis.status === 'COMPLETED' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' :
+                tripAnalysis.status === 'PARTIAL' ? 'border-amber-200 bg-amber-50 text-amber-700' :
+                tripAnalysis.status === 'FAILED' ? 'border-red-200 bg-red-50 text-red-700' :
+                'border-gray-200'
+              }>{tripAnalysis.status}</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <AnalysisMetric label="Coverage" value={`${Math.round(tripAnalysis.coverage * 100)}%`} />
+              <AnalysisMetric label="Confidence" value={tripAnalysis.confidence == null ? '—' : `${Math.round(tripAnalysis.confidence * 100)}%`} />
+              <AnalysisMetric label="Net direction" value={formatDirection(tripAnalysis.netDirection)} />
+              <AnalysisMetric label="Dominant direction" value={formatDirection(tripAnalysis.dominantDirection)} />
+            </div>
+            {tripAnalysis.directionBreakdown && (
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Distance by direction</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {Object.entries(tripAnalysis.directionBreakdown)
+                    .filter(([, value]) => value > 0)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([direction, value]) => (
+                      <div key={direction} className="flex items-center justify-between rounded border bg-white px-2 py-1 text-xs">
+                        <span className="capitalize">{direction}</span><span>{Math.round(value * 100)}%</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+            {tripAnalysis.errorCode && <p className="text-sm text-amber-700">Analysis note: {tripAnalysis.errorCode.replaceAll('_', ' ').toLowerCase()}</p>}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Traffic Analysis Summary */}
       {drive.recordingMode === 'TRAFFIC' && (
         <>
@@ -423,14 +490,11 @@ export default function RecordingDetailPage() {
                   <strong>No traffic analysis available.</strong>
                 </p>
                 <p className="text-sm text-gray-600">
-                  Traffic analysis requires road segments to be defined. Visit the{' '}
-                  <button
-                    onClick={() => router.push('/segments')}
-                    className="text-blue-600 hover:underline font-medium"
-                  >
-                    Segments page
-                  </button>
-                  {' '}to create road segments, then record a new traffic session.
+                  {tripAnalysis?.status === 'FAILED'
+                    ? `Road matching failed${tripAnalysis.errorCode ? ` (${tripAnalysis.errorCode})` : ''}. The raw recording is still available.`
+                    : tripAnalysis?.status === 'PROCESSING'
+                      ? 'Road matching is still processing.'
+                      : 'No sustained congestion was detected on this drive.'}
                 </p>
               </CardContent>
             </Card>
@@ -598,7 +662,12 @@ export default function RecordingDetailPage() {
         </CardHeader>
         <CardContent>
           {gpsPoints.length > 0 ? (
-            <RouteMap points={gpsPoints} accelPoints={accelPoints} mode={drive.recordingMode} />
+            <RouteMap
+              points={gpsPoints}
+              accelPoints={accelPoints}
+              mode={drive.recordingMode}
+              matchedGeometry={tripAnalysis?.matchedGeometry}
+            />
           ) : (
             <div className="h-[400px] bg-gray-50 rounded-lg flex items-center justify-center text-gray-400 border border-gray-200">
               No GPS data available for this drive
@@ -606,6 +675,28 @@ export default function RecordingDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {maneuvers.length > 0 && (
+        <Card className="mb-6 border-gray-200">
+          <CardHeader className="pb-2"><CardTitle className="text-lg">Named maneuvers</CardTitle></CardHeader>
+          <CardContent>
+            <ol className="space-y-3">
+              {maneuvers.map((maneuver) => (
+                <li key={maneuver.sequence} className="flex gap-3 rounded-lg border bg-white p-3">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">{maneuver.sequence + 1}</span>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{maneuver.instruction}</p>
+                    <p className="text-xs text-gray-500">
+                      {maneuver.fromRoad && maneuver.toRoad ? `${maneuver.fromRoad} → ${maneuver.toRoad}` : maneuver.turnType.replaceAll('-', ' ')}
+                      {maneuver.angleDegrees != null ? ` · ${Math.round(maneuver.angleDegrees)}°` : ''}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Traffic Events Details */}
       {drive.recordingMode === 'TRAFFIC' && congestionEvents.length > 0 && (
@@ -669,4 +760,12 @@ export default function RecordingDetailPage() {
       )}
     </PageLayout>
   );
+}
+
+function AnalysisMetric({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg border bg-white p-3"><p className="text-xs text-gray-500">{label}</p><p className="mt-1 font-semibold capitalize text-gray-900">{value}</p></div>;
+}
+
+function formatDirection(direction: string | null): string {
+  return direction ? direction.toLowerCase().replaceAll('_', ' ') : '—';
 }

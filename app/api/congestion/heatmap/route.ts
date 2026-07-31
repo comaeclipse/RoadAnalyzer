@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { HeatmapResponse } from '@/types/congestion';
 
+export const dynamic = 'force-dynamic';
+
 // GET /api/congestion/heatmap - Get heatmap data for all segments
 export async function GET(request: NextRequest) {
   try {
@@ -61,6 +63,7 @@ export async function GET(request: NextRequest) {
           id: true,
           startTime: true,
           avgSpeed: true,
+          tripAnalysis: { select: { matchedGeometry: true } },
           gpsData: { orderBy: { timestamp: 'asc' }, select: { latitude: true, longitude: true, speed: true } },
           congestionEvents: { select: { severity: true } },
         },
@@ -94,7 +97,9 @@ export async function GET(request: NextRequest) {
           name: 'Anonymous mobile route',
           geometry: {
             type: 'LineString' as const,
-            coordinates: route.gpsData.map((point) => [point.longitude, point.latitude]),
+            coordinates: (
+              route.tripAnalysis?.matchedGeometry as unknown as GeoJSON.LineString | null
+            )?.coordinates ?? route.gpsData.map((point) => [point.longitude, point.latitude]),
           },
           congestionScore: score,
           eventCount: route.congestionEvents.length,
