@@ -86,6 +86,18 @@ final class RecordingStore: NSObject, ObservableObject {
         }
     }
 
+    private func handleAuthorizationChange(_ status: CLAuthorizationStatus) {
+        locationStatus = status
+        if status == .authorizedWhenInUse { locationManager.requestAlwaysAuthorization() }
+    }
+
+    private func append(_ samples: [LocationSample]) {
+        guard var current = session else { return }
+        current.locations.append(contentsOf: samples)
+        session = current
+        if current.locations.count.isMultiple(of: 10) { persist() }
+    }
+
     private func append(_ motion: MotionSample) {
         guard var current = session else { return }
         current.motionSamples.append(motion)
@@ -125,22 +137,26 @@ final class RecordingStore: NSObject, ObservableObject {
     }
 }
 
+// CLLocationManagerDelegate requirements are nonisolated, so each callback hands
+// only Sendable values to the main actor rather than touching state directly.
 extension RecordingStore: CLLocationManagerDelegate {
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        locationStatus = manager.authorizationStatus
-        if locationStatus == .authorizedWhenInUse { manager.requestAlwaysAuthorization() }
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        Task { @MainActor [weak self] in self?.handleAuthorizationChange(status) }
     }
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard var current = session else { return }
-        for location in locations where location.horizontalAccuracy >= 0 && location.horizontalAccuracy <= 100 {
-            current.locations.append(LocationSample(location))
-        }
-        session = current
-        if current.locations.count.isMultiple(of: 10) { persist() }
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        let samples = locations
+            .filter { $0.horizontalAccuracy >= 0 && $0.horizontalAccuracy <= 100 }
+            .map(LocationSample.init)
+        guard !samples.isEmpty else { return }
+        Task { @MainActor [weak self] in self?.append(samples) }
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) { statusMessage = "Location error: \(error.localizedDescription)" }
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let message = error.localizedDescription
+        Task { @MainActor [weak self] in self?.statusMessage = "Location error: \(message)" }
+    }
 }
 
 private struct SavedSessions: Codable { let active: RecordingSession?; let pending: [RecordingSession] }

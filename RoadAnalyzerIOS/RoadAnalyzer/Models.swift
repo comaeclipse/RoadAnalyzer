@@ -72,7 +72,9 @@ struct RecordingSession: Codable, Identifiable {
     }
 }
 
-struct MobileReport: Codable {
+// Encode-only: the wire format is written by UploadClient and never read back,
+// so the defaulted version constants below need no decoding support.
+struct MobileReport: Encodable {
     let schemaVersion = "1"
     let idempotencyKey: String
     let startedAt: Int64
@@ -84,8 +86,8 @@ struct MobileReport: Codable {
     let diagnostics: Diagnostics
     let trafficAnalysisVersion = "1"
 
-    struct Device: Codable { let model: String; let osVersion: String }
-    struct Diagnostics: Codable { let batteryLevel: Float?; let networkType: String; let locationAuthorization: String }
+    struct Device: Encodable { let model: String; let osVersion: String }
+    struct Diagnostics: Encodable { let batteryLevel: Float?; let networkType: String; let locationAuthorization: String }
 
     init(session: RecordingSession, authorization: CLAuthorizationStatus) {
         idempotencyKey = session.id.uuidString.lowercased()
