@@ -134,6 +134,86 @@ Avg Speed: 43.3 mph
 
 ---
 
+### 3. `rebuild-segment-stats.ts`
+
+**Purpose**: Recomputes the entire `SegmentStatistics` table from the `CongestionEvent` rows that actually exist.
+
+`SegmentStatistics` is a pre-aggregated (materialized view) table that the live pipeline maintains **incrementally** — `eventCount` and `totalDuration` are written with Prisma's `increment`, so they only ever grow. Nothing ever subtracts. This means:
+
+- **Deleting drives leaves their contributions permanently baked in.** Cascade deletes remove the `CongestionEvent` rows but cannot touch the aggregates derived from them.
+- **The percentage and score columns disagree with the counts.** `pctFreeFlow`, `congestionScore`, etc. are *overwritten* by whichever drive last touched a segment, so they describe a single drive while `eventCount` describes all of them.
+
+This script fixes both by discarding the table and rebuilding it, using the same
+`aggregateSegmentStatistics()` function the live pipeline uses — so the two cannot drift.
+
+**Usage**:
+```bash
+npm run rebuild-segment-stats
+```
+
+Dry run by default: it prints the diff and writes nothing. To actually rebuild:
+
+```bash
+npm run rebuild-segment-stats -- --apply
+```
+
+**What it does**:
+1. Loads every `CongestionEvent` in the database (these cascade with their drive, so they are by definition current)
+2. Aggregates them into the five time windows: all-time, per day-of-week, per hour, per day+hour, and per week
+3. Diffs the result against the stored rows and reports removed / corrected / added / unchanged
+4. With `--apply`, replaces the table inside a single transaction and verifies the final row count
+
+**When to run it**:
+- After deleting any drives
+- After noticing `eventCount` that looks too high for the number of drives on record
+- Any time the aggregates need to be trusted
+
+**Output**:
+```
+🔄 Rebuilding segment statistics from congestion events
+
+🔍 MODE: DRY RUN (no changes)
+
+Congestion events found:      40
+SegmentStatistics rows now:   114
+SegmentStatistics rows after: 106
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 DIFF
+   Removed (no events left):  8
+   Corrected (stale totals):  1
+   Added (missing window):    0
+   Unchanged:                 105
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✏️  Corrected rows:
+   New Warrington Blvd [all-time] — events 11 → 5, duration 744s → 312s
+```
+
+**Notes**:
+- `sampleCount` is left at `0`. The live pipeline never populates it either, and it counts GPS samples rather than congestion events, so there is no honest value to derive from `CongestionEvent` rows alone.
+- Week buckets are computed in **UTC** (`getWeekStart` in `lib/post-processing.ts`). The deployment runs in UTC, so every stored `weekStart` is UTC midnight; using local-time methods on a developer machine would produce a second, offset set of weekly rows for the same weeks.
+
+---
+
+### `load-env.ts` (helper, not a script)
+
+Side-effect module that loads `.env` into `process.env`. Next.js does this automatically for the app, but standalone `tsx` scripts get no such help, and `dotenv` is only present transitively via Prisma rather than declared in `package.json`.
+
+Import it **first**, before anything that reads `process.env` at module scope:
+
+```ts
+import './load-env';
+import { prisma } from '../lib/prisma';
+```
+
+ES module imports are hoisted, so calling a loader *function* inline would not reliably run before the Prisma import is evaluated. Imported modules are evaluated in source order, which is the guarantee this relies on.
+
+> `backfill-roughness.ts` and `analyze-data.ts` do **not** import it yet and will fail with
+> `Environment variable not found: DATABASE_URL` when run outside Next.js.
+
+---
+
 ## Running Scripts Manually
 
 If you prefer to run the scripts directly with `tsx`:
@@ -144,7 +224,17 @@ npx tsx scripts/backfill-roughness.ts
 
 # Analyze data
 npx tsx scripts/analyze-data.ts
+
+# Rebuild segment statistics (dry run)
+npx tsx scripts/rebuild-segment-stats.ts
+
+# Rebuild segment statistics (write)
+npx tsx scripts/rebuild-segment-stats.ts --apply
 ```
+
+> **Note**: `tsx` is referenced by these npm scripts but is not currently listed in
+> `package.json` dependencies, so `npm run <script>` fails with
+> `'tsx' is not recognized`. Use `npx tsx ...` until it is added as a devDependency.
 
 ## Requirements
 

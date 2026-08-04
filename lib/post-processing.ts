@@ -20,23 +20,70 @@ export interface CongestionAnalysisResult {
 }
 
 /**
- * Get start of week for a date (Monday 00:00:00)
+ * Get start of week for a date (Monday 00:00:00 UTC)
  * Used for weekly trend aggregation
+ *
+ * Deliberately UTC. This value is a bucket key, so it has to be identical no
+ * matter where the code runs. The deployment runs in UTC, so every weekStart
+ * already stored is UTC midnight; computing it with local-time methods on a
+ * developer machine would silently produce a second, offset set of weekly rows
+ * for the same weeks.
  */
-function getWeekStart(date: Date): Date {
+export function getWeekStart(date: Date): Date {
   const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Adjust when day is Sunday
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
+  const day = d.getUTCDay();
+  const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1); // Adjust when day is Sunday
+  d.setUTCDate(diff);
+  d.setUTCHours(0, 0, 0, 0);
   return d;
 }
 
 /**
- * Update segment statistics with new congestion events
- * Uses upsert to incrementally update aggregates
+ * Minimal shape needed to aggregate a congestion event into segment statistics.
+ * Satisfied by both freshly detected events and stored CongestionEvent rows.
  */
-async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
+export interface SegmentStatsEvent {
+  segmentId: string;
+  dayOfWeek: number;
+  hourOfDay: number;
+  startTime: Date;
+  duration: number;
+  avgSpeed: number;
+  severity: CongestionSeverity;
+}
+
+/**
+ * A single computed SegmentStatistics row, keyed by its time window.
+ */
+export interface SegmentStatsAggregate {
+  segmentId: string;
+  dayOfWeek: number | null;
+  hourOfDay: number | null;
+  weekStart: Date | null;
+  eventCount: number;
+  totalDuration: number;
+  avgSpeed: number | null;
+  pctFreeFlow: number;
+  pctSlow: number;
+  pctCongested: number;
+  pctHeavy: number;
+  pctGridlock: number;
+  congestionScore: number;
+}
+
+/**
+ * Aggregate congestion events into SegmentStatistics rows.
+ *
+ * Pure: given the same events it always returns the same rows, with no database
+ * access and no dependence on what is already stored. Each event fans out into
+ * five time windows (all-time, per day-of-week, per hour, per day+hour, per week).
+ *
+ * Shared by the incremental pipeline and the full rebuild script so the two can
+ * never disagree about how a window is keyed or scored.
+ */
+export function aggregateSegmentStatistics(
+  events: SegmentStatsEvent[]
+): SegmentStatsAggregate[] {
   // Group events by aggregation keys
   const aggregates = new Map<string, {
     segmentId: string;
@@ -96,8 +143,7 @@ async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
     }
   }
 
-  // Upsert statistics
-  for (const agg of Array.from(aggregates.values())) {
+  return Array.from(aggregates.values()).map((agg) => {
     const { segmentId, dayOfWeek, hourOfDay, weekStart, stats } = agg;
 
     // Calculate aggregate metrics
@@ -122,6 +168,32 @@ async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
       pctGridlock * 0
     ) / 100;
 
+    return {
+      segmentId,
+      dayOfWeek,
+      hourOfDay,
+      weekStart,
+      eventCount: stats.eventCount,
+      totalDuration: stats.totalDuration,
+      avgSpeed,
+      pctFreeFlow,
+      pctSlow,
+      pctCongested,
+      pctHeavy,
+      pctGridlock,
+      congestionScore,
+    };
+  });
+}
+
+/**
+ * Update segment statistics with new congestion events
+ * Uses upsert to incrementally update aggregates
+ */
+async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
+  for (const agg of aggregateSegmentStatistics(events)) {
+    const { segmentId, dayOfWeek, hourOfDay, weekStart } = agg;
+
     // Find existing statistics record
     const existing = await prisma.segmentStatistics.findFirst({
       where: {
@@ -138,19 +210,19 @@ async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
         where: { id: existing.id },
         data: {
           eventCount: {
-            increment: stats.eventCount,
+            increment: agg.eventCount,
           },
           totalDuration: {
-            increment: stats.totalDuration,
+            increment: agg.totalDuration,
           },
-          avgSpeed,
-          avgCongestionSpeed: avgSpeed,
-          pctFreeFlow,
-          pctSlow,
-          pctCongested,
-          pctHeavy,
-          pctGridlock,
-          congestionScore,
+          avgSpeed: agg.avgSpeed,
+          avgCongestionSpeed: agg.avgSpeed,
+          pctFreeFlow: agg.pctFreeFlow,
+          pctSlow: agg.pctSlow,
+          pctCongested: agg.pctCongested,
+          pctHeavy: agg.pctHeavy,
+          pctGridlock: agg.pctGridlock,
+          congestionScore: agg.congestionScore,
         },
       });
     } else {
@@ -162,16 +234,16 @@ async function updateSegmentStatistics(events: DetectedEvent[]): Promise<void> {
           hourOfDay,
           weekStart,
           sampleCount: 0,
-          eventCount: stats.eventCount,
-          totalDuration: stats.totalDuration,
-          avgSpeed,
-          avgCongestionSpeed: avgSpeed,
-          pctFreeFlow,
-          pctSlow,
-          pctCongested,
-          pctHeavy,
-          pctGridlock,
-          congestionScore,
+          eventCount: agg.eventCount,
+          totalDuration: agg.totalDuration,
+          avgSpeed: agg.avgSpeed,
+          avgCongestionSpeed: agg.avgSpeed,
+          pctFreeFlow: agg.pctFreeFlow,
+          pctSlow: agg.pctSlow,
+          pctCongested: agg.pctCongested,
+          pctHeavy: agg.pctHeavy,
+          pctGridlock: agg.pctGridlock,
+          congestionScore: agg.congestionScore,
         },
       });
     }
