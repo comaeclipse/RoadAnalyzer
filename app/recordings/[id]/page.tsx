@@ -71,6 +71,13 @@ interface GpsPoint {
   lng: number;
   speed: number | null;
   timestamp: number;
+  // Nearest segment match, when trip analysis produced one. Carries the point
+  // snapped onto the matched road.
+  match?: {
+    segmentId: string;
+    snappedLatitude: number | null;
+    snappedLongitude: number | null;
+  } | null;
 }
 
 interface AccelPoint {
@@ -813,6 +820,7 @@ export default function RecordingDetailPage() {
               matchedGeometry={tripAnalysis?.matchedGeometry}
               stops={stops}
               slowZones={slowZones}
+              congestionEvents={congestionEvents}
               selectedTrafficFeatureId={selectedTrafficFeatureId}
               onTrafficFeatureSelect={setSelectedTrafficFeatureId}
             />

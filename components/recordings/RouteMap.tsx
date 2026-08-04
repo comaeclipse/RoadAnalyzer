@@ -9,6 +9,22 @@ interface GpsPoint {
   lng: number;
   speed: number | null;
   timestamp: number;
+  match?: {
+    snappedLatitude: number | null;
+    snappedLongitude: number | null;
+  } | null;
+}
+
+/**
+ * Position to draw a point at: the map-matched location when trip analysis
+ * produced one, otherwise the raw fix. Keeps overlays sitting on the matched
+ * route rather than floating beside it on GPS error.
+ */
+function drawnPosition(point: GpsPoint): GeoJSON.Position {
+  const { snappedLatitude, snappedLongitude } = point.match ?? {};
+  return snappedLatitude != null && snappedLongitude != null
+    ? [snappedLongitude, snappedLatitude]
+    : [point.lng, point.lat];
 }
 
 interface AccelPoint {
@@ -29,6 +45,23 @@ export interface TrafficFeature {
   avgSpeed?: number;
 }
 
+/**
+ * A stored CongestionEvent, as returned by /api/recordings/[id].
+ *
+ * Distinct from TrafficFeature: these are detected server side against matched
+ * road segments and persisted, rather than derived from the raw trace in the
+ * browser.
+ */
+export interface CongestionOverlay {
+  id: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  severity: 'FREE_FLOW' | 'SLOW' | 'CONGESTED' | 'HEAVY' | 'GRIDLOCK';
+  avgSpeed: number;
+  segment?: { name: string } | null;
+}
+
 interface RouteMapProps {
   points: GpsPoint[];
   accelPoints?: AccelPoint[];
@@ -36,9 +69,12 @@ interface RouteMapProps {
   matchedGeometry?: GeoJSON.LineString | null;
   stops?: TrafficFeature[];
   slowZones?: TrafficFeature[];
+  congestionEvents?: CongestionOverlay[];
   selectedTrafficFeatureId?: string | null;
   onTrafficFeatureSelect?: (id: string) => void;
 }
+
+const CONGESTION_ORANGE = '#f97316';
 
 function calculateRoughness(points: AccelPoint[]): number {
   if (points.length < 2) return 0;
@@ -61,6 +97,7 @@ export default function RouteMap({
   matchedGeometry,
   stops = [],
   slowZones = [],
+  congestionEvents = [],
   selectedTrafficFeatureId,
   onTrafficFeatureSelect,
 }: RouteMapProps) {
@@ -119,6 +156,33 @@ export default function RouteMap({
     });
   }, [mode, points, slowZones, stops]);
 
+  // Stored congestion events, drawn as an orange band along the trace they cover.
+  // Events are built from GPS sample timestamps server side, so the times line up
+  // exactly with the points here.
+  const congestionLines = useMemo<MapLine[]>(() => {
+    if (mode !== 'TRAFFIC' || points.length < 2) return [];
+    return congestionEvents.flatMap((event) => {
+      const start = new Date(event.startTime).getTime();
+      const end = new Date(event.endTime).getTime();
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+      const coordinates = points
+        .filter((point) => point.timestamp >= start && point.timestamp <= end)
+        .map(drawnPosition);
+      if (coordinates.length < 2) return [];
+      const where = event.segment?.name ? ` on ${event.segment.name}` : '';
+      return [{
+        id: `congestion-${event.id}`,
+        coordinates,
+        color: CONGESTION_ORANGE,
+        width: 10,
+        opacity: 0.55,
+        label:
+          `${severityLabel(event.severity)}${where} — ${formatDuration(event.duration)}` +
+          ` at ${(event.avgSpeed * 2.23694).toFixed(1)} mph`,
+      }];
+    });
+  }, [congestionEvents, mode, points]);
+
   const markers = useMemo<MapMarker[]>(() => {
     if (!points.length) return [];
     return [
@@ -133,17 +197,8 @@ export default function RouteMap({
       selected: stop.id === selectedTrafficFeatureId,
       label: `Detected stop — ${formatDuration(stop.duration)} (unclassified)`,
     })),
-    ...slowZones.map((zone) => ({
-      id: zone.id,
-      lng: zone.location.lng,
-      lat: zone.location.lat,
-      color: '#f97316',
-      size: 16,
-      selected: zone.id === selectedTrafficFeatureId,
-      label: `Slow zone — ${formatDuration(zone.duration)}${zone.avgSpeed == null ? '' : ` at ${(zone.avgSpeed * 2.23694).toFixed(1)} mph`}`,
-    })),
     ];
-  }, [points, selectedTrafficFeatureId, slowZones, stops]);
+  }, [points, selectedTrafficFeatureId, stops]);
 
   if (!points.length) {
     return <div className="flex h-[400px] items-center justify-center rounded-lg border bg-gray-50 text-gray-400">No GPS data</div>;
@@ -153,20 +208,32 @@ export default function RouteMap({
     <div className="space-y-2">
       <div className="overflow-hidden rounded-lg border border-gray-200">
         <MapboxLineMap
-          lines={[...lines, ...trafficLines]}
+          // Congestion first so its band sits beneath the route rather than hiding it.
+          lines={[...congestionLines, ...lines, ...trafficLines]}
           markers={markers}
           selectedMarkerId={selectedTrafficFeatureId}
           onMarkerClick={onTrafficFeatureSelect}
         />
       </div>
-      {matchedGeometry ? (
-        <div className="flex gap-4 text-xs text-gray-500">
-          <span><span className="mr-1 inline-block h-1 w-4 bg-blue-600" />Matched route</span>
-          <span><span className="mr-1 inline-block h-1 w-4 border-t border-dashed border-gray-400" />Raw GPS</span>
-        </div>
-      ) : (
-        <p className="text-xs text-gray-500">{mode === 'TRAFFIC' ? 'Route colored by recorded speed.' : 'Route colored by road roughness.'}</p>
-      )}
+      <div className="flex flex-wrap gap-4 text-xs text-gray-500">
+        {matchedGeometry ? (
+          <>
+            <span><span className="mr-1 inline-block h-1 w-4 bg-blue-600" />Matched route</span>
+            <span><span className="mr-1 inline-block h-1 w-4 border-t border-dashed border-gray-400" />Raw GPS</span>
+          </>
+        ) : (
+          <span>{mode === 'TRAFFIC' ? 'Route colored by recorded speed.' : 'Route colored by road roughness.'}</span>
+        )}
+        {congestionLines.length > 0 && (
+          <span>
+            <span
+              className="mr-1 inline-block h-2.5 w-4 rounded-sm align-middle"
+              style={{ background: CONGESTION_ORANGE, opacity: 0.55 }}
+            />
+            Congestion event
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -174,4 +241,15 @@ export default function RouteMap({
 function formatDuration(milliseconds: number): string {
   const seconds = Math.round(milliseconds / 1_000);
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+function severityLabel(severity: CongestionOverlay['severity']): string {
+  const labels: Record<CongestionOverlay['severity'], string> = {
+    FREE_FLOW: 'Free flow',
+    SLOW: 'Slow',
+    CONGESTED: 'Congested',
+    HEAVY: 'Heavy traffic',
+    GRIDLOCK: 'Gridlock',
+  };
+  return labels[severity];
 }
