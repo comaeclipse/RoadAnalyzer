@@ -1,0 +1,370 @@
+/**
+ * Intersection Stop Analysis
+ *
+ * Answers "how often do I actually get stopped here?" for the places a route
+ * passes through repeatedly.
+ *
+ * The probability is only meaningful with a denominator: being stopped at a
+ * light four times means nothing until you know whether you passed it four
+ * times or forty. So every cluster counts both the stops and the traversals.
+ *
+ * Approach direction is part of a cluster's identity. The two stop lines of one
+ * intersection sit tens of metres apart on opposite sides and face different
+ * signal phases, so merging them would average two unrelated things together.
+ */
+
+export interface AnalysisPoint {
+  lat: number;
+  lng: number;
+  speed: number | null;
+  timestamp: number;
+  /** Matched road name, when trip analysis produced one. */
+  roadName?: string | null;
+}
+
+export interface AnalysisTag {
+  lat: number;
+  lng: number;
+  kind: string;
+}
+
+export interface AnalysisDrive {
+  id: string;
+  name: string | null;
+  startTime: string;
+  points: AnalysisPoint[];
+  tags?: AnalysisTag[];
+}
+
+export interface StopEvent {
+  driveId: string;
+  driveName: string | null;
+  driveStartTime: string;
+  lat: number;
+  lng: number;
+  timestamp: number;
+  /** Milliseconds stationary. */
+  duration: number;
+  /** Direction of travel on approach, degrees clockwise from north. */
+  bearing: number;
+  roadName: string | null;
+}
+
+export interface IntersectionApproach {
+  id: string;
+  lat: number;
+  lng: number;
+  bearing: number;
+  direction: string;
+  roadName: string | null;
+  kind: string;
+  /** Traversals in this direction, stopped or not. The denominator. */
+  passes: number;
+  stopCount: number;
+  probability: number;
+  /** Wilson 95% interval, so a 2-of-2 does not read as a certainty. */
+  confidenceLow: number;
+  confidenceHigh: number;
+  medianDelay: number;
+  maxDelay: number;
+  totalDelay: number;
+  stops: StopEvent[];
+}
+
+export interface AnalysisOptions {
+  /** Speed at or below which a sample counts as stationary (m/s). */
+  stoppedSpeed: number;
+  /** Shortest stationary period that counts as a stop (ms). */
+  minStopDuration: number;
+  /** Stops within this distance may share a cluster (m). */
+  clusterRadius: number;
+  /** Distance within which a drive counts as traversing the cluster (m). */
+  passRadius: number;
+  /** Approach headings within this many degrees are the same direction. */
+  bearingTolerance: number;
+  /** Distance back along the trace used to measure approach heading (m). */
+  approachLookback: number;
+}
+
+export const DEFAULT_OPTIONS: AnalysisOptions = {
+  stoppedSpeed: 0.5,
+  minStopDuration: 5_000,
+  clusterRadius: 40,
+  passRadius: 45,
+  bearingTolerance: 60,
+  approachLookback: 60,
+};
+
+const EARTH_RADIUS_M = 6_371_000;
+const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+const toDegrees = (radians: number) => (radians * 180) / Math.PI;
+
+export function haversineMeters(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const dLat = toRadians(b.lat - a.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRadians(a.lat)) * Math.cos(toRadians(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/** Initial bearing from a to b, degrees clockwise from north in [0, 360). */
+export function bearingDegrees(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return (toDegrees(Math.atan2(y, x)) + 360) % 360;
+}
+
+/** Smallest angle between two bearings, in [0, 180]. */
+export function bearingDelta(a: number, b: number): number {
+  return Math.abs(((a - b + 540) % 360) - 180);
+}
+
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+export function cardinal(bearing: number): string {
+  return COMPASS[Math.round(((bearing % 360) + 360) % 360 / 45) % 8];
+}
+
+export function directionLabel(bearing: number): string {
+  const names: Record<string, string> = {
+    N: 'northbound', NE: 'northeast-bound', E: 'eastbound', SE: 'southeast-bound',
+    S: 'southbound', SW: 'southwest-bound', W: 'westbound', NW: 'northwest-bound',
+  };
+  return names[cardinal(bearing)];
+}
+
+/**
+ * Wilson score interval for a binomial proportion.
+ *
+ * Preferred over the normal approximation because the counts here are tiny and
+ * often land on 0 or 1, where the simple interval collapses to zero width and
+ * claims a certainty the data does not support.
+ */
+export function wilsonInterval(successes: number, trials: number, z = 1.96): {
+  low: number;
+  high: number;
+} {
+  if (trials === 0) return { low: 0, high: 1 };
+  const p = successes / trials;
+  const denominator = 1 + (z * z) / trials;
+  const centre = (p + (z * z) / (2 * trials)) / denominator;
+  const margin =
+    (z * Math.sqrt((p * (1 - p)) / trials + (z * z) / (4 * trials * trials))) / denominator;
+  return {
+    low: Math.max(0, centre - margin),
+    high: Math.min(1, centre + margin),
+  };
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+/**
+ * Direction of travel arriving at points[index].
+ *
+ * Walks back along the trace until roughly lookbackMeters of ground has been
+ * covered, so the bearing reflects the approach rather than GPS jitter between
+ * two adjacent samples while stationary.
+ */
+export function approachBearing(
+  points: AnalysisPoint[],
+  index: number,
+  lookbackMeters: number
+): number | null {
+  const target = points[index];
+  let travelled = 0;
+  for (let i = index; i > 0; i--) {
+    travelled += haversineMeters(points[i - 1], points[i]);
+    if (travelled >= lookbackMeters) return bearingDegrees(points[i - 1], target);
+  }
+  // Trace starts inside the lookback window; use whatever is available.
+  return points.length > 1 && travelled > 5 ? bearingDegrees(points[0], target) : null;
+}
+
+/** Contiguous stationary periods long enough to count as a stop. */
+export function detectStops(
+  drive: AnalysisDrive,
+  options: AnalysisOptions = DEFAULT_OPTIONS
+): StopEvent[] {
+  const { points } = drive;
+  const events: StopEvent[] = [];
+  let start: number | null = null;
+
+  const flush = (endIndex: number) => {
+    if (start === null) return;
+    const duration = points[endIndex].timestamp - points[start].timestamp;
+    if (duration >= options.minStopDuration) {
+      const bearing = approachBearing(points, start, options.approachLookback);
+      if (bearing !== null) {
+        events.push({
+          driveId: drive.id,
+          driveName: drive.name,
+          driveStartTime: drive.startTime,
+          lat: points[start].lat,
+          lng: points[start].lng,
+          timestamp: points[start].timestamp,
+          duration,
+          bearing,
+          roadName: points[start].roadName ?? null,
+        });
+      }
+    }
+    start = null;
+  };
+
+  for (let i = 0; i < points.length; i++) {
+    const stopped = (points[i].speed ?? 0) <= options.stoppedSpeed;
+    if (stopped && start === null) start = i;
+    if (!stopped && start !== null) flush(i - 1);
+  }
+  if (start !== null) flush(points.length - 1);
+
+  return events;
+}
+
+/**
+ * Count traversals of a location in a given direction.
+ *
+ * A drive may pass the same spot more than once, so contiguous runs of nearby
+ * samples are collapsed into one visit each. A visit counts only if the drive
+ * was heading the same way as the cluster.
+ */
+export function countPasses(
+  drive: AnalysisDrive,
+  cluster: { lat: number; lng: number; bearing: number },
+  options: AnalysisOptions = DEFAULT_OPTIONS
+): number {
+  const { points } = drive;
+  let passes = 0;
+  let insideSince: number | null = null;
+
+  const closeVisit = (endIndex: number) => {
+    if (insideSince === null) return;
+    // Heading measured at the point nearest the cluster centre in this visit.
+    let nearest = insideSince;
+    let nearestDistance = Infinity;
+    for (let i = insideSince; i <= endIndex; i++) {
+      const distance = haversineMeters(points[i], cluster);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = i;
+      }
+    }
+    const bearing = approachBearing(points, nearest, options.approachLookback);
+    if (bearing !== null && bearingDelta(bearing, cluster.bearing) <= options.bearingTolerance) {
+      passes++;
+    }
+    insideSince = null;
+  };
+
+  for (let i = 0; i < points.length; i++) {
+    const inside = haversineMeters(points[i], cluster) <= options.passRadius;
+    if (inside && insideSince === null) insideSince = i;
+    if (!inside && insideSince !== null) closeVisit(i - 1);
+  }
+  if (insideSince !== null) closeVisit(points.length - 1);
+
+  return passes;
+}
+
+function mostCommon(values: string[]): string | null {
+  if (values.length === 0) return null;
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0][0];
+}
+
+/**
+ * Group stops into approach clusters, then measure each against how often the
+ * same approach was traversed at all.
+ *
+ * Results are ranked by how much time the approach actually costs, since a
+ * light stopped at 3 times for 90s each matters more than one stopped at 5
+ * times for 4s.
+ */
+export function analyzeIntersections(
+  drives: AnalysisDrive[],
+  options: AnalysisOptions = DEFAULT_OPTIONS
+): IntersectionApproach[] {
+  const allStops = drives.flatMap((drive) => detectStops(drive, options));
+
+  // Greedy clustering on position and heading together.
+  const groups: StopEvent[][] = [];
+  for (const stop of allStops) {
+    const match = groups.find((group) => {
+      const centre = {
+        lat: group.reduce((sum, s) => sum + s.lat, 0) / group.length,
+        lng: group.reduce((sum, s) => sum + s.lng, 0) / group.length,
+      };
+      const meanBearing = group[0].bearing;
+      return (
+        haversineMeters(stop, centre) <= options.clusterRadius &&
+        bearingDelta(stop.bearing, meanBearing) <= options.bearingTolerance
+      );
+    });
+    if (match) match.push(stop);
+    else groups.push([stop]);
+  }
+
+  const taggedPoints = drives.flatMap((drive) => drive.tags ?? []);
+
+  return groups
+    .map((group, index) => {
+      const lat = group.reduce((sum, s) => sum + s.lat, 0) / group.length;
+      const lng = group.reduce((sum, s) => sum + s.lng, 0) / group.length;
+      const bearing = group[0].bearing;
+      const centre = { lat, lng, bearing };
+
+      const passes = drives.reduce(
+        (total, drive) => total + countPasses(drive, centre, options),
+        0
+      );
+      // A stop implies a pass; guard against a cluster radius narrower than the
+      // pass radius ever producing an impossible ratio.
+      const stopCount = group.length;
+      const trials = Math.max(passes, stopCount);
+
+      const durations = group.map((s) => s.duration);
+      const nearbyKinds = taggedPoints
+        .filter((tag) => haversineMeters(tag, { lat, lng }) <= options.clusterRadius)
+        .map((tag) => tag.kind);
+
+      const { low, high } = wilsonInterval(stopCount, trials);
+
+      return {
+        id: `approach-${index}`,
+        lat,
+        lng,
+        bearing,
+        direction: directionLabel(bearing),
+        roadName: mostCommon(group.flatMap((s) => (s.roadName ? [s.roadName] : []))),
+        kind: mostCommon(nearbyKinds) ?? 'UNCLASSIFIED',
+        passes: trials,
+        stopCount,
+        probability: trials === 0 ? 0 : stopCount / trials,
+        confidenceLow: low,
+        confidenceHigh: high,
+        medianDelay: median(durations),
+        maxDelay: Math.max(...durations),
+        totalDelay: durations.reduce((sum, value) => sum + value, 0),
+        stops: [...group].sort((a, b) => b.timestamp - a.timestamp),
+      };
+    })
+    .sort((a, b) => b.totalDelay - a.totalDelay);
+}

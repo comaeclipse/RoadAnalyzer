@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { History, Map, Route, Settings, CopyPlus, Waypoints } from 'lucide-react';
+import { History, Map, Route, Settings, CopyPlus, Waypoints, TrafficCone } from 'lucide-react';
 
 const navItems = [
   { href: '/map', label: 'Congestion', icon: Map },
   { href: '/recordings', label: 'Recordings', icon: History },
   { href: '/routes', label: 'Routes', icon: Waypoints },
+  { href: '/intersections', label: 'Intersections', icon: TrafficCone },
   { href: '/segments', label: 'Segments', icon: Route },
   { href: '/matching', label: 'Matching', icon: CopyPlus },
   { href: '/calibration', label: 'Calibrate', icon: Settings },

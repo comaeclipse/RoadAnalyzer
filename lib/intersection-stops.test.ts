@@ -1,0 +1,238 @@
+import { describe, it, expect } from 'vitest';
+import {
+  analyzeIntersections,
+  bearingDegrees,
+  bearingDelta,
+  cardinal,
+  countPasses,
+  detectStops,
+  haversineMeters,
+  wilsonInterval,
+  DEFAULT_OPTIONS,
+  type AnalysisDrive,
+  type AnalysisPoint,
+} from './intersection-stops';
+
+// ~111.32 m per 0.001 degree of latitude
+const METRE_LAT = 0.001 / 111.32;
+
+/** Straight run of samples heading due north through `stopAt`, if given. */
+function northboundDrive(
+  id: string,
+  startLat: number,
+  lng: number,
+  count: number,
+  stopRange?: [number, number]
+): AnalysisDrive {
+  const points: AnalysisPoint[] = [];
+  for (let i = 0; i < count; i++) {
+    const stopped = stopRange && i >= stopRange[0] && i <= stopRange[1];
+    points.push({
+      lat: startLat + i * 10 * METRE_LAT, // 10 m per sample
+      lng,
+      speed: stopped ? 0 : 12,
+      timestamp: 1_000_000 + i * 1_000,
+      roadName: 'Test Road',
+    });
+  }
+  // While stopped the vehicle does not move; collapse those positions.
+  if (stopRange) {
+    const held = points[stopRange[0]].lat;
+    for (let i = stopRange[0]; i <= stopRange[1]; i++) points[i].lat = held;
+    for (let i = stopRange[1] + 1; i < count; i++) {
+      points[i].lat = held + (i - stopRange[1]) * 10 * METRE_LAT;
+    }
+  }
+  return { id, name: id, startTime: '2026-08-01T12:00:00.000Z', points };
+}
+
+describe('geometry', () => {
+  it('measures distance between known points', () => {
+    const a = { lat: 30.4, lng: -87.2 };
+    const b = { lat: 30.401, lng: -87.2 };
+    expect(haversineMeters(a, b)).toBeGreaterThan(110);
+    expect(haversineMeters(a, b)).toBeLessThan(112);
+  });
+
+  it('returns 0 for identical points', () => {
+    expect(haversineMeters({ lat: 30, lng: -87 }, { lat: 30, lng: -87 })).toBe(0);
+  });
+
+  it('computes cardinal bearings', () => {
+    // Sample-scale offsets. Over a long east-west span the *initial* great-circle
+    // bearing is legitimately not 90 degrees, so keep the deltas realistic.
+    expect(bearingDegrees({ lat: 30, lng: -87 }, { lat: 30.001, lng: -87 })).toBeCloseTo(0, 1);
+    expect(bearingDegrees({ lat: 30, lng: -87 }, { lat: 30, lng: -86.999 })).toBeCloseTo(90, 1);
+    expect(bearingDegrees({ lat: 30, lng: -87 }, { lat: 29.999, lng: -87 })).toBeCloseTo(180, 1);
+    expect(bearingDegrees({ lat: 30, lng: -87 }, { lat: 30, lng: -87.001 })).toBeCloseTo(270, 1);
+  });
+
+  it('treats bearing difference as circular', () => {
+    expect(bearingDelta(350, 10)).toBe(20);
+    expect(bearingDelta(10, 350)).toBe(20);
+    expect(bearingDelta(0, 180)).toBe(180);
+    expect(bearingDelta(90, 90)).toBe(0);
+  });
+
+  it('labels compass directions, wrapping at north', () => {
+    expect(cardinal(0)).toBe('N');
+    expect(cardinal(90)).toBe('E');
+    expect(cardinal(181)).toBe('S');
+    expect(cardinal(359)).toBe('N');
+  });
+});
+
+describe('wilsonInterval', () => {
+  it('does not claim certainty from a small perfect record', () => {
+    const { low, high } = wilsonInterval(2, 2);
+    expect(low).toBeLessThan(0.7);
+    expect(high).toBeCloseTo(1, 5);
+  });
+
+  it('narrows as evidence accumulates', () => {
+    const few = wilsonInterval(10, 20);
+    const many = wilsonInterval(100, 200);
+    expect(many.high - many.low).toBeLessThan(few.high - few.low);
+  });
+
+  it('spans the whole range with no trials', () => {
+    expect(wilsonInterval(0, 0)).toEqual({ low: 0, high: 1 });
+  });
+
+  it('brackets the observed proportion', () => {
+    const { low, high } = wilsonInterval(3, 10);
+    expect(low).toBeLessThan(0.3);
+    expect(high).toBeGreaterThan(0.3);
+  });
+});
+
+describe('detectStops', () => {
+  it('finds a stop that lasts long enough', () => {
+    const stops = detectStops(northboundDrive('d1', 30.4, -87.2, 40, [20, 30]));
+    expect(stops).toHaveLength(1);
+    expect(stops[0].duration).toBe(10_000);
+    expect(stops[0].bearing).toBeCloseTo(0, 0);
+  });
+
+  it('ignores a pause below the duration threshold', () => {
+    const stops = detectStops(northboundDrive('d1', 30.4, -87.2, 40, [20, 22]));
+    expect(stops).toHaveLength(0);
+  });
+
+  it('finds nothing on a drive that never stops', () => {
+    expect(detectStops(northboundDrive('d1', 30.4, -87.2, 40))).toHaveLength(0);
+  });
+
+  it('handles a stop running to the end of the trace', () => {
+    const stops = detectStops(northboundDrive('d1', 30.4, -87.2, 40, [25, 39]));
+    expect(stops).toHaveLength(1);
+  });
+});
+
+describe('countPasses', () => {
+  it('counts a traversal in the matching direction', () => {
+    const drive = northboundDrive('d1', 30.4, -87.2, 60);
+    const midpoint = drive.points[30];
+    expect(countPasses(drive, { ...midpoint, bearing: 0 })).toBe(1);
+  });
+
+  it('does not count a traversal in the opposite direction', () => {
+    const drive = northboundDrive('d1', 30.4, -87.2, 60);
+    const midpoint = drive.points[30];
+    expect(countPasses(drive, { ...midpoint, bearing: 180 })).toBe(0);
+  });
+
+  it('does not count a drive that never comes near', () => {
+    const drive = northboundDrive('d1', 30.4, -87.2, 60);
+    expect(countPasses(drive, { lat: 30.9, lng: -87.2, bearing: 0 })).toBe(0);
+  });
+
+  it('counts one visit per traversal, not one per sample', () => {
+    // 45 m pass radius over 10 m spacing means several samples fall inside.
+    const drive = northboundDrive('d1', 30.4, -87.2, 60);
+    expect(countPasses(drive, { ...drive.points[30], bearing: 0 })).toBe(1);
+  });
+});
+
+describe('analyzeIntersections', () => {
+  it('separates opposite approaches to the same place', () => {
+    const northbound = northboundDrive('north', 30.4, -87.2, 60, [30, 40]);
+    // Same coordinates travelled the other way.
+    const southbound: AnalysisDrive = {
+      id: 'south',
+      name: 'south',
+      startTime: '2026-08-02T12:00:00.000Z',
+      points: [...northbound.points]
+        .reverse()
+        .map((point, index) => ({ ...point, speed: 12, timestamp: 1_000_000 + index * 1_000 })),
+    };
+    // Give the southbound drive its own stop.
+    for (let i = 30; i <= 40; i++) southbound.points[i].speed = 0;
+
+    const approaches = analyzeIntersections([northbound, southbound]);
+    expect(approaches).toHaveLength(2);
+    const bearings = approaches.map((a) => Math.round(a.bearing));
+    expect(bearingDelta(bearings[0], bearings[1])).toBeGreaterThan(150);
+  });
+
+  it('reports a denominator that includes drives which did not stop', () => {
+    const stopper = northboundDrive('stopper', 30.4, -87.2, 60, [30, 40]);
+    const roller = northboundDrive('roller', 30.4, -87.2, 60);
+    const [approach] = analyzeIntersections([stopper, roller]);
+    expect(approach.stopCount).toBe(1);
+    expect(approach.passes).toBe(2);
+    expect(approach.probability).toBeCloseTo(0.5, 5);
+  });
+
+  it('groups repeat stops at one place into a single approach', () => {
+    const first = northboundDrive('first', 30.4, -87.2, 60, [30, 40]);
+    const second = northboundDrive('second', 30.4, -87.2, 60, [30, 45]);
+    const approaches = analyzeIntersections([first, second]);
+    expect(approaches).toHaveLength(1);
+    expect(approaches[0].stopCount).toBe(2);
+    expect(approaches[0].probability).toBe(1);
+    // Two-for-two is not evidence of certainty.
+    expect(approaches[0].confidenceLow).toBeLessThan(0.7);
+  });
+
+  it('never reports more stops than passes', () => {
+    const drives = [
+      northboundDrive('a', 30.4, -87.2, 60, [30, 40]),
+      northboundDrive('b', 30.4, -87.2, 60, [30, 40]),
+      northboundDrive('c', 30.4, -87.2, 60),
+    ];
+    for (const approach of analyzeIntersections(drives)) {
+      expect(approach.stopCount).toBeLessThanOrEqual(approach.passes);
+      expect(approach.probability).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('returns nothing when no drive ever stops', () => {
+    expect(analyzeIntersections([northboundDrive('a', 30.4, -87.2, 60)])).toEqual([]);
+  });
+
+  it('labels the stop kind from a nearby tag', () => {
+    const drive = northboundDrive('a', 30.4, -87.2, 60, [30, 40]);
+    drive.tags = [{ lat: drive.points[30].lat, lng: drive.points[30].lng, kind: 'RED_LIGHT' }];
+    expect(analyzeIntersections([drive])[0].kind).toBe('RED_LIGHT');
+  });
+
+  it('falls back to UNCLASSIFIED without a tag', () => {
+    expect(analyzeIntersections([northboundDrive('a', 30.4, -87.2, 60, [30, 40])])[0].kind)
+      .toBe('UNCLASSIFIED');
+  });
+
+  it('ranks by total time lost', () => {
+    const long = northboundDrive('long', 30.4, -87.2, 60, [30, 55]);
+    const short = northboundDrive('short', 30.5, -87.2, 60, [30, 36]);
+    const approaches = analyzeIntersections([long, short]);
+    expect(approaches[0].totalDelay).toBeGreaterThanOrEqual(approaches[1].totalDelay);
+  });
+
+  it('respects a custom stopped-speed threshold', () => {
+    const drive = northboundDrive('a', 30.4, -87.2, 60);
+    for (let i = 30; i <= 40; i++) drive.points[i].speed = 1.5;
+    expect(detectStops(drive, DEFAULT_OPTIONS)).toHaveLength(0);
+    expect(detectStops(drive, { ...DEFAULT_OPTIONS, stoppedSpeed: 2 })).toHaveLength(1);
+  });
+});
