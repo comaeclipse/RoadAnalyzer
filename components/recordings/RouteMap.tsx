@@ -68,7 +68,6 @@ interface RouteMapProps {
   mode?: 'ROAD_QUALITY' | 'TRAFFIC';
   matchedGeometry?: GeoJSON.LineString | null;
   stops?: TrafficFeature[];
-  slowZones?: TrafficFeature[];
   congestionEvents?: CongestionOverlay[];
   selectedTrafficFeatureId?: string | null;
   onTrafficFeatureSelect?: (id: string) => void;
@@ -96,7 +95,6 @@ export default function RouteMap({
   mode = 'ROAD_QUALITY',
   matchedGeometry,
   stops = [],
-  slowZones = [],
   congestionEvents = [],
   selectedTrafficFeatureId,
   onTrafficFeatureSelect,
@@ -140,21 +138,25 @@ export default function RouteMap({
     });
   }, [accelPoints, matchedGeometry, mode, points]);
 
+  // Only stops get a line here. Slow zones used to draw their own orange line,
+  // but stored congestion events now cover the same ground with better data, so
+  // a second orange layer was redundant. Slow zones remain in the detected
+  // traffic feature list for tagging.
   const trafficLines = useMemo<MapLine[]>(() => {
     if (mode !== 'TRAFFIC') return [];
-    return [...stops, ...slowZones].flatMap((feature) => {
-      const coordinates = points.slice(feature.start, feature.end + 1).map((point) => [point.lng, point.lat] as GeoJSON.Position);
+    return stops.flatMap((feature) => {
+      const coordinates = points.slice(feature.start, feature.end + 1).map(drawnPosition);
       if (coordinates.length < 2) return [];
       return [{
         id: `traffic-${feature.id}`,
         coordinates,
-        color: feature.kind === 'stop' ? '#dc2626' : '#f97316',
-        width: feature.kind === 'stop' ? 7 : 5,
+        color: '#dc2626',
+        width: 7,
         opacity: 0.95,
-        label: feature.kind === 'stop' ? `Detected stop — ${formatDuration(feature.duration)}` : `Slow zone — ${formatDuration(feature.duration)}`,
+        label: `Detected stop — ${formatDuration(feature.duration)}`,
       }];
     });
-  }, [mode, points, slowZones, stops]);
+  }, [mode, points, stops]);
 
   // Stored congestion events, drawn as an orange band along the trace they cover.
   // Events are built from GPS sample timestamps server side, so the times line up

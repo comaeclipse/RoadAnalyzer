@@ -819,7 +819,6 @@ export default function RecordingDetailPage() {
               mode={drive.recordingMode}
               matchedGeometry={tripAnalysis?.matchedGeometry}
               stops={stops}
-              slowZones={slowZones}
               congestionEvents={congestionEvents}
               selectedTrafficFeatureId={selectedTrafficFeatureId}
               onTrafficFeatureSelect={setSelectedTrafficFeatureId}
