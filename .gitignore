@@ -44,3 +44,8 @@ next-env.d.ts
 # temporary analysis files
 recordings.json
 drive-*.json
+
+# xcode
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcappdata/

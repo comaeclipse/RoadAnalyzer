@@ -1,7 +1,8 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
+	classes = {
+	};
 	objectVersion = 56;
 	objects = {
 
@@ -13,6 +14,11 @@
 		A10000000000000000000015 /* RecordingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* RecordingStore.swift */; };
 		A10000000000000000000016 /* UploadClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006 /* UploadClient.swift */; };
 		A10000000000000000000017 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PrivacyInfo.xcprivacy */; };
+		A10000000000000000000018 /* StopDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000A /* StopDetector.swift */; };
+		A10000000000000000000019 /* AnchorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000B /* AnchorStore.swift */; };
+		A1000000000000000000001A /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000C /* Haptics.swift */; };
+		A1000000000000000000001B /* StopPromptOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000D /* StopPromptOverlay.swift */; };
+		A1000000000000000000001C /* StopReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000E /* StopReviewView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,44 +31,217 @@
 		A10000000000000000000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000008 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A10000000000000000000009 /* RoadAnalyzer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = RoadAnalyzer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000000000000000000000A /* StopDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopDetector.swift; sourceTree = "<group>"; };
+		A1000000000000000000000B /* AnchorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnchorStore.swift; sourceTree = "<group>"; };
+		A1000000000000000000000C /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
+		A1000000000000000000000D /* StopPromptOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopPromptOverlay.swift; sourceTree = "<group>"; };
+		A1000000000000000000000E /* StopReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopReviewView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000032 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
 /* Begin PBXGroup section */
-		A10000000000000000000020 = {isa = PBXGroup; children = (A10000000000000000000021 /* RoadAnalyzer */, A10000000000000000000022 /* Products */); sourceTree = "<group>"; };
-		A10000000000000000000021 /* RoadAnalyzer */ = {isa = PBXGroup; path = RoadAnalyzer; sourceTree = "<group>"; children = (A10000000000000000000001 /* RoadAnalyzerApp.swift */, A10000000000000000000002 /* ContentView.swift */, A10000000000000000000003 /* Models.swift */, A10000000000000000000004 /* TrafficAnalyzer.swift */, A10000000000000000000005 /* RecordingStore.swift */, A10000000000000000000006 /* UploadClient.swift */, A10000000000000000000007 /* Info.plist */, A10000000000000000000008 /* PrivacyInfo.xcprivacy */); };
-		A10000000000000000000022 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000009 /* RoadAnalyzer.app */); name = Products; sourceTree = "<group>"; };
+		A10000000000000000000020 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000021 /* RoadAnalyzer */,
+				A10000000000000000000022 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000021 /* RoadAnalyzer */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000001 /* RoadAnalyzerApp.swift */,
+				A10000000000000000000002 /* ContentView.swift */,
+				A10000000000000000000003 /* Models.swift */,
+				A10000000000000000000004 /* TrafficAnalyzer.swift */,
+				A10000000000000000000005 /* RecordingStore.swift */,
+				A10000000000000000000006 /* UploadClient.swift */,
+				A1000000000000000000000A /* StopDetector.swift */,
+				A1000000000000000000000B /* AnchorStore.swift */,
+				A1000000000000000000000C /* Haptics.swift */,
+				A1000000000000000000000D /* StopPromptOverlay.swift */,
+				A1000000000000000000000E /* StopReviewView.swift */,
+				A10000000000000000000007 /* Info.plist */,
+				A10000000000000000000008 /* PrivacyInfo.xcprivacy */,
+			);
+			path = RoadAnalyzer;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000022 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000009 /* RoadAnalyzer.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A10000000000000000000030 /* RoadAnalyzer */ = {isa = PBXNativeTarget; buildConfigurationList = A10000000000000000000040 /* Build configuration list for PBXNativeTarget "RoadAnalyzer" */; buildPhases = (A10000000000000000000031 /* Sources */, A10000000000000000000032 /* Frameworks */, A10000000000000000000033 /* Resources */); buildRules = (); dependencies = (); name = RoadAnalyzer; productName = RoadAnalyzer; productReference = A10000000000000000000009 /* RoadAnalyzer.app */; productType = "com.apple.product-type.application"; };
+		A10000000000000000000030 /* RoadAnalyzer */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000040 /* Build configuration list for PBXNativeTarget "RoadAnalyzer" */;
+			buildPhases = (
+				A10000000000000000000031 /* Sources */,
+				A10000000000000000000032 /* Frameworks */,
+				A10000000000000000000033 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RoadAnalyzer;
+			productName = RoadAnalyzer;
+			productReference = A10000000000000000000009 /* RoadAnalyzer.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		A10000000000000000000050 /* Project object */ = {isa = PBXProject; attributes = { LastUpgradeCheck = 1500; TargetAttributes = { A10000000000000000000030 = { CreatedOnToolsVersion = 15.0; }; }; }; buildConfigurationList = A10000000000000000000051 /* Build configuration list for PBXProject "RoadAnalyzer" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A10000000000000000000020; productRefGroup = A10000000000000000000022 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A10000000000000000000030 /* RoadAnalyzer */); };
+		A10000000000000000000050 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A10000000000000000000030 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = A10000000000000000000051 /* Build configuration list for PBXProject "RoadAnalyzer" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000020;
+			productRefGroup = A10000000000000000000022 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000030 /* RoadAnalyzer */,
+			);
+		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A10000000000000000000033 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000017 /* PrivacyInfo.xcprivacy in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000033 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000017 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A10000000000000000000031 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000011 /* RoadAnalyzerApp.swift in Sources */, A10000000000000000000012 /* ContentView.swift in Sources */, A10000000000000000000013 /* Models.swift in Sources */, A10000000000000000000014 /* TrafficAnalyzer.swift in Sources */, A10000000000000000000015 /* RecordingStore.swift in Sources */, A10000000000000000000016 /* UploadClient.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000031 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000011 /* RoadAnalyzerApp.swift in Sources */,
+				A10000000000000000000012 /* ContentView.swift in Sources */,
+				A10000000000000000000013 /* Models.swift in Sources */,
+				A10000000000000000000014 /* TrafficAnalyzer.swift in Sources */,
+				A10000000000000000000015 /* RecordingStore.swift in Sources */,
+				A10000000000000000000016 /* UploadClient.swift in Sources */,
+				A10000000000000000000018 /* StopDetector.swift in Sources */,
+				A10000000000000000000019 /* AnchorStore.swift in Sources */,
+				A1000000000000000000001A /* Haptics.swift in Sources */,
+				A1000000000000000000001B /* StopPromptOverlay.swift in Sources */,
+				A1000000000000000000001C /* StopReviewView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
-/* Begin PBXFrameworksBuildPhase section */
-		A10000000000000000000032 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-/* End PBXFrameworksBuildPhase section */
-
 /* Begin XCBuildConfiguration section */
-		A10000000000000000000060 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0; }; name = Debug; };
-		A10000000000000000000061 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0; }; name = Release; };
-		A10000000000000000000062 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_ENTITLEMENTS = RoadAnalyzer/RoadAnalyzer.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = RoadAnalyzer/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.example.RoadAnalyzer; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
-		A10000000000000000000063 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_ENTITLEMENTS = RoadAnalyzer/RoadAnalyzer.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = RoadAnalyzer/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.example.RoadAnalyzer; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+		A10000000000000000000060 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A10000000000000000000061 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A10000000000000000000062 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = RoadAnalyzer/RoadAnalyzer.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = T4K77ZEXHZ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RoadAnalyzer/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.RoadAnalyzer;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A10000000000000000000063 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = RoadAnalyzer/RoadAnalyzer.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = T4K77ZEXHZ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RoadAnalyzer/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.RoadAnalyzer;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A10000000000000000000040 /* Build configuration list for PBXNativeTarget "RoadAnalyzer" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000062 /* Debug */, A10000000000000000000063 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		A10000000000000000000051 /* Build configuration list for PBXProject "RoadAnalyzer" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000060 /* Debug */, A10000000000000000000061 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A10000000000000000000040 /* Build configuration list for PBXNativeTarget "RoadAnalyzer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000062 /* Debug */,
+				A10000000000000000000063 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000051 /* Build configuration list for PBXProject "RoadAnalyzer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000060 /* Debug */,
+				A10000000000000000000061 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 	};
 	rootObject = A10000000000000000000050 /* Project object */;

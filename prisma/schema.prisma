@@ -8,6 +8,10 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Migrations must bypass Neon's pooler: PgBouncer runs in transaction mode,
+  // which does not carry the session-level advisory locks Prisma Migrate takes
+  // out. The app keeps using the pooled URL above for queries.
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 model Drive {
@@ -36,11 +40,15 @@ model Drive {
   tags        String[]
 
   // Calculated statistics (updated on endDrive)
-  duration    Int? // milliseconds
+  duration    Int? // milliseconds, excluding time the driver paused
   distance    Float? // meters
   maxSpeed    Float? // m/s
   avgSpeed    Float? // m/s
   sampleCount Int    @default(0)
+
+  // Time the driver deliberately excluded (pulled over, refuelling). Kept
+  // separate from `duration` so drives that used pause stay comparable.
+  pausedDuration Int? // milliseconds
 
   // Road roughness analysis
   roughnessScore     Float? // 0-100 (100 = smoothest)
@@ -51,6 +59,7 @@ model Drive {
   gpsData           GpsSample[]
   congestionEvents  CongestionEvent[]
   trafficTags       TrafficTag[]
+  pausedIntervals   PausedInterval[]
   tripAnalysis      TripAnalysis?
   routeTemplate     RouteTemplate? @relation(fields: [routeTemplateId], references: [id], onDelete: SetNull)
 
@@ -357,6 +366,28 @@ model TrafficTag {
   @@unique([driveId, featureKey])
   @@index([driveId])
   @@index([kind])
+}
+
+/// A span the driver removed from the drive (pulled over for an ambulance,
+/// stopped for fuel). Recorded so analysis reads the gap as deliberate rather
+/// than as one very long stop or a jump across the map.
+model PausedInterval {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  driveId String
+  drive   Drive  @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  /// The device's own UUID for this pause, making re-ingest of a retried
+  /// upload idempotent via the unique index below.
+  clientId String
+
+  startedAt DateTime
+  endedAt   DateTime?
+  duration  Int? // milliseconds
+  endedBy   String? // USER | STOP | RECOVERED
+
+  @@unique([driveId, clientId])
+  @@index([driveId, startedAt])
 }
 
 // Pre-aggregated statistics for a segment (materialized view pattern)
