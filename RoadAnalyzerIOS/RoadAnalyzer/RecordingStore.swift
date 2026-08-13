@@ -98,6 +98,9 @@ final class RecordingStore: NSObject, ObservableObject {
     private let pathMonitor = NWPathMonitor()
     private let persistenceURL: URL
     private let anchors = AnchorStore()
+    /// Read once here so the upload path never has to touch UIDevice, and can
+    /// therefore build the whole report off the main actor.
+    private let deviceInfo = MobileReport.Device.current
     private var detector = StopDetector()
     /// The authoritative in-flight drive. Deliberately *not* `@Published`: the
     /// arrays inside it are appended to thousands of times per drive, and going
@@ -240,7 +243,6 @@ final class RecordingStore: NSObject, ObservableObject {
             }
         }
         completed.endedAt = now
-        completed.events = TrafficAnalyzer.analyze(completed.locations, excluding: completed.pauses)
         active = nil
         detector.resetForNewSession()
         resetRoute()
@@ -280,7 +282,6 @@ final class RecordingStore: NSObject, ObservableObject {
                     let lastFix = recovered.locations.last?.timestamp ?? open.startedAt
                     recovered.closeOpenPause(at: lastFix, endedBy: .recovered)
                     recovered.endedAt = lastFix
-                    recovered.events = TrafficAnalyzer.analyze(recovered.locations, excluding: recovered.pauses)
                     active = nil
                     resetRoute()
                     if recovered.untaggedStops.isEmpty {
@@ -632,7 +633,7 @@ final class RecordingStore: NSObject, ObservableObject {
             for index in pending.indices.reversed() where pending[index].failedPermanently != true {
                 if !force, let next = pending[index].nextUploadAt, next > .now { continue }
                 do {
-                    try await UploadClient.shared.upload(MobileReport(session: pending[index], authorization: locationStatus))
+                    try await UploadClient.shared.upload(session: pending[index], authorization: locationStatus, device: deviceInfo)
                     pending.remove(at: index)
                     statusMessage = "Traffic report uploaded"
                 } catch UploadError.rejected(let status) {

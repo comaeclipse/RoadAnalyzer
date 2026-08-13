@@ -199,7 +199,6 @@ struct RecordingSession: Codable, Identifiable {
     var endedAt: Date?
     var locations: [LocationSample]
     var motionSamples: [MotionSample]
-    var events: [TrafficEvent]
     var batteryLevel: Float?
     var networkType: String
     var uploadAttempts: Int
@@ -218,7 +217,6 @@ struct RecordingSession: Codable, Identifiable {
         self.startedAt = startedAt
         locations = []
         motionSamples = []
-        events = []
         self.batteryLevel = batteryLevel
         self.networkType = networkType
         uploadAttempts = 0
@@ -348,7 +346,17 @@ struct MobileReport: Encodable {
         }
     }
 
-    struct Device: Encodable { let model: String; let osVersion: String }
+    /// Captured on the main actor while recording starts, so that building the
+    /// report itself -- which thins tens of thousands of samples -- can happen
+    /// off it. `UIDevice.current` is main-thread only.
+    struct Device: Encodable, Sendable {
+        let model: String
+        let osVersion: String
+
+        @MainActor static var current: Device {
+            Device(model: UIDevice.current.model, osVersion: UIDevice.current.systemVersion)
+        }
+    }
     struct Diagnostics: Encodable { let batteryLevel: Float?; let networkType: String; let locationAuthorization: String }
 
     // Mirrors MAX_LOCATION_SAMPLES / MAX_MOTION_SAMPLES in lib/mobile-report.ts.
@@ -377,7 +385,7 @@ struct MobileReport: Encodable {
         return Array(tags.sorted { $0.startedAt < $1.startedAt }.prefix(limit))
     }
 
-    init(session: RecordingSession, authorization: CLAuthorizationStatus) {
+    init(session: RecordingSession, authorization: CLAuthorizationStatus, device: Device) {
         idempotencyKey = session.id.uuidString.lowercased()
         startedAt = Int64(session.startedAt.timeIntervalSince1970 * 1_000)
         endedAt = Int64((session.endedAt ?? .now).timeIntervalSince1970 * 1_000)
@@ -389,7 +397,7 @@ struct MobileReport: Encodable {
         // discarded, and any stop still open at upload time.
         trafficTags = Self.capped(session.stops.compactMap(TrafficTagPayload.init), to: Self.maxTrafficTags)
         pausedIntervals = Array(session.pauses.prefix(Self.maxPausedIntervals))
-        device = Device(model: UIDevice.current.model, osVersion: UIDevice.current.systemVersion)
+        self.device = device
         diagnostics = Diagnostics(batteryLevel: session.batteryLevel, networkType: session.networkType, locationAuthorization: authorization.reportName)
     }
 }

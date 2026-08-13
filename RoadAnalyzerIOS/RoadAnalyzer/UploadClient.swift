@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 
 enum UploadError: Error {
     case missingEndpoint
@@ -12,7 +13,11 @@ enum UploadError: Error {
 actor UploadClient {
     static let shared = UploadClient()
 
-    func upload(_ report: MobileReport) async throws {
+    /// Takes the session rather than a finished report so that thinning the
+    /// sample arrays, like encoding them, happens on this actor instead of on
+    /// the main one.
+    func upload(session: RecordingSession, authorization: CLAuthorizationStatus, device: MobileReport.Device) async throws {
+        let report = MobileReport(session: session, authorization: authorization, device: device)
         guard let base = Bundle.main.object(forInfoDictionaryKey: "RoadAnalyzerAPIBaseURL") as? String,
               let url = URL(string: base)?.appending(path: "api/mobile-reports"),
               !base.contains("YOUR-DEPLOYMENT") else { throw UploadError.missingEndpoint }

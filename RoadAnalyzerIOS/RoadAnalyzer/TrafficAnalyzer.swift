@@ -5,6 +5,11 @@ enum TrafficAnalyzer {
     static let freeFlowSpeed = 15.0
     static let minimumEventDuration: TimeInterval = 30
 
+    /// Not on the recording path. The server recomputes congestion from the
+    /// uploaded trace (`runDriveAnalysis`), and the result was never uploaded or
+    /// shown, so calling this from `stop()` only bought a main-thread hitch on
+    /// the tap where one is least welcome. Kept for offline inspection of a
+    /// trace; do not put it back in front of the driver.
     static func analyze(_ samples: [LocationSample]) -> [TrafficEvent] {
         analyze(samples, excluding: [])
     }
@@ -45,12 +50,21 @@ enum TrafficAnalyzer {
         }
     }
 
-    /// Shared great-circle distance. CLLocation is the same primitive the
-    /// sample-pair walk above has always used; this exists so the detector and
-    /// the anchor store do not each rebuild it.
+    /// Shared great-circle distance, in metres. Deliberately not
+    /// `CLLocation.distance(from:)`: that allocates two objects per call, and
+    /// this runs once per sample pair through the analyzer and twice per fix
+    /// through the live detector. Haversine on a sphere rather than CoreLocation's
+    /// ellipsoid costs a few tenths of a percent, which is nothing against
+    /// thresholds of 15, 30 and 200 metres.
     static func distance(_ aLatitude: Double, _ aLongitude: Double, _ bLatitude: Double, _ bLongitude: Double) -> Double {
-        CLLocation(latitude: aLatitude, longitude: aLongitude)
-            .distance(from: CLLocation(latitude: bLatitude, longitude: bLongitude))
+        let earthRadius = 6_371_008.8
+        let radians = Double.pi / 180
+        let deltaLatitude = (bLatitude - aLatitude) * radians
+        let deltaLongitude = (bLongitude - aLongitude) * radians
+        let a = sin(deltaLatitude / 2) * sin(deltaLatitude / 2)
+            + cos(aLatitude * radians) * cos(bLatitude * radians)
+            * sin(deltaLongitude / 2) * sin(deltaLongitude / 2)
+        return 2 * earthRadius * atan2(sqrt(a), sqrt(max(0, 1 - a)))
     }
 
     /// Splits a sample stream into the runs that fall outside every paused
