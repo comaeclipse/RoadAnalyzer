@@ -37,6 +37,21 @@ function safeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+/**
+ * A coordinate we can safely fit the map to. Rejects non-finite values,
+ * out-of-range lat/lng (e.g. a swapped [lat, lng] pair), and Null Island
+ * [0, 0] — the sentinel a missing GPS fix leaves behind. A single stray
+ * point of any of these kinds would otherwise blow the bounding box out to
+ * span the country and zoom the whole map out.
+ */
+function isFittableCoordinate(position: GeoJSON.Position): position is [number, number] {
+  const [lng, lat] = position;
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return false;
+  if (lng < -180 || lng > 180 || lat < -90 || lat > 90) return false;
+  if (lng === 0 && lat === 0) return false;
+  return true;
+}
+
 export function MapboxLineMap({
   lines,
   className = 'h-[400px] w-full',
@@ -87,7 +102,7 @@ export function MapboxLineMap({
           },
         });
         for (const coordinate of line.coordinates) {
-          bounds.extend(coordinate as [number, number]);
+          if (isFittableCoordinate(coordinate)) bounds.extend(coordinate);
         }
         if (onLineClick) {
           map.on('click', layerId, () => onLineClick(line.id));
@@ -119,7 +134,7 @@ export function MapboxLineMap({
         if (marker.label) mapMarker.setPopup(new mapboxgl.Popup().setText(marker.label));
         mapMarker.addTo(map);
         if (onMarkerClick) element.addEventListener('click', () => onMarkerClick(marker.id));
-        bounds.extend([marker.lng, marker.lat]);
+        if (isFittableCoordinate([marker.lng, marker.lat])) bounds.extend([marker.lng, marker.lat]);
         if (marker.id === selectedMarkerId) {
           selectedMarker = { marker: mapMarker, lng: marker.lng, lat: marker.lat };
         }
