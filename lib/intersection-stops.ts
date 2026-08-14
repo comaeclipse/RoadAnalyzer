@@ -297,21 +297,35 @@ export function detectStops(
   return events;
 }
 
+/** One continuous period a drive spent inside a cluster. */
+export interface ClusterVisit {
+  /** Timestamp of the first sample inside the cluster on this visit. */
+  startTimestamp: number;
+  /** Timestamp of the last sample inside the cluster on this visit. */
+  endTimestamp: number;
+  /** Whether the heading nearest the centre matched the cluster's. */
+  matchesApproach: boolean;
+}
+
 /**
- * Count traversals of a location in a given direction.
+ * The separate occasions a drive passed through a cluster.
  *
  * A drive may pass the same spot more than once, so contiguous runs of nearby
- * samples are collapsed into one visit each. A visit counts only if the drive
- * was heading the same way as the cluster.
+ * samples are collapsed into one visit each.
+ *
+ * This is the unit both halves of the ratio are counted in. The denominator
+ * counts qualifying visits; the numerator counts visits on which the driver
+ * was stopped, which is why the stops themselves are matched back to a visit
+ * rather than tallied individually.
  */
-export function countPasses(
+export function findVisits(
   drive: AnalysisDrive,
   cluster: { lat: number; lng: number; bearing: number },
   rawOptions: AnalysisOptions = DEFAULT_OPTIONS
-): number {
+): ClusterVisit[] {
   const options = resolveOptions(rawOptions);
   const { points } = drive;
-  let passes = 0;
+  const visits: ClusterVisit[] = [];
   let insideSince: number | null = null;
 
   const closeVisit = (endIndex: number) => {
@@ -327,9 +341,12 @@ export function countPasses(
       }
     }
     const bearing = approachBearing(points, nearest, options.approachLookback);
-    if (bearing !== null && bearingDelta(bearing, cluster.bearing) <= options.bearingTolerance) {
-      passes++;
-    }
+    visits.push({
+      startTimestamp: points[insideSince].timestamp,
+      endTimestamp: points[endIndex].timestamp,
+      matchesApproach:
+        bearing !== null && bearingDelta(bearing, cluster.bearing) <= options.bearingTolerance,
+    });
     insideSince = null;
   };
 
@@ -340,7 +357,70 @@ export function countPasses(
   }
   if (insideSince !== null) closeVisit(points.length - 1);
 
-  return passes;
+  return visits;
+}
+
+/**
+ * Count traversals of a location in a given direction.
+ *
+ * A visit counts only if the drive was heading the same way as the cluster.
+ */
+export function countPasses(
+  drive: AnalysisDrive,
+  cluster: { lat: number; lng: number; bearing: number },
+  rawOptions: AnalysisOptions = DEFAULT_OPTIONS
+): number {
+  return findVisits(drive, cluster, rawOptions).filter((visit) => visit.matchesApproach).length;
+}
+
+/**
+ * One stopped traversal, described by its longest stationary fragment.
+ *
+ * Duration is the sum, because what the approach cost on that pass is the
+ * whole time spent stationary there, not the longest single fragment of it.
+ */
+function combineStops(group: StopEvent[]): StopEvent {
+  if (group.length === 1) return group[0];
+  const longest = group.reduce((a, b) => (b.duration > a.duration ? b : a));
+  return {
+    ...longest,
+    timestamp: Math.min(...group.map((stop) => stop.timestamp)),
+    duration: group.reduce((total, stop) => total + stop.duration, 0),
+  };
+}
+
+/**
+ * Collapse stops made on a single traversal into one stopped visit.
+ *
+ * Creeping forward in a queue produces several stationary periods, but a visit
+ * is one traversal however many times the queue moved. Left separate they
+ * count one stopped pass several times over against a denominator that counted
+ * it once, and report a median describing a fragment of the wait rather than
+ * the wait.
+ *
+ * Grouping is by visit rather than by drive, so a genuine second approach later
+ * in the same drive stays its own stop.
+ */
+function mergeStopsPerVisit(
+  stops: StopEvent[],
+  visitsByDrive: Map<string, ClusterVisit[]>
+): StopEvent[] {
+  const groups = new Map<string, StopEvent[]>();
+
+  stops.forEach((stop, index) => {
+    const visits = visitsByDrive.get(stop.driveId) ?? [];
+    const visitIndex = visits.findIndex(
+      (visit) => stop.timestamp >= visit.startTimestamp && stop.timestamp <= visit.endTimestamp
+    );
+    // A stop matching no visit keeps its own identity rather than being folded
+    // into an unrelated one.
+    const key = visitIndex === -1 ? `${stop.driveId}:orphan:${index}` : `${stop.driveId}:${visitIndex}`;
+    const existing = groups.get(key);
+    if (existing) existing.push(stop);
+    else groups.set(key, [stop]);
+  });
+
+  return Array.from(groups.values(), combineStops);
 }
 
 /**
@@ -421,19 +501,26 @@ export function analyzeIntersections(
 
   return clusters
     .map((cluster, index) => {
-      const { stops: group, lat, lng, bearing } = cluster;
+      const { lat, lng, bearing } = cluster;
       const centre = { lat, lng, bearing };
 
-      const passes = drives.reduce(
-        (total, drive) => total + countPasses(drive, centre, options),
+      // Visits are the unit both halves are counted in, so derive them once and
+      // measure the denominator and the numerator against the same list.
+      const visitsByDrive = new Map(
+        drives.map((drive) => [drive.id, findVisits(drive, centre, options)] as const)
+      );
+      const passes = Array.from(visitsByDrive.values()).reduce(
+        (total, visits) => total + visits.filter((visit) => visit.matchesApproach).length,
         0
       );
-      // resolveOptions guarantees every clustered stop sits inside the pass
-      // bubble, so passes should already cover stopCount. The residual case is
-      // a stop whose approach bearing matched the cluster while the bearing at
-      // the nearest point of that visit did not. Clamping keeps the ratio
-      // possible; passesClamped marks the row as measured on shakier ground
-      // rather than hiding the disagreement behind a tidy percentage.
+      const group = mergeStopsPerVisit(cluster.stops, visitsByDrive);
+      // Both halves are now counted in visits, and resolveOptions keeps every
+      // clustered stop inside the pass bubble, so passes should cover
+      // stopCount. The residual case is a stop whose own approach bearing
+      // matched the cluster while the bearing measured at the nearest point of
+      // its visit did not, leaving the visit unqualified. Clamping keeps the
+      // ratio possible; passesClamped marks the row as measured on shakier
+      // ground rather than hiding the disagreement behind a tidy percentage.
       const stopCount = group.length;
       const passesClamped = passes < stopCount;
       const trials = Math.max(passes, stopCount);

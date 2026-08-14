@@ -416,6 +416,63 @@ describe('analyzeIntersections', () => {
     expect(seedFirst[0].bearing).toBeCloseTo(seedLast[0].bearing, 5);
   });
 
+  // Queue creep used to count one stopped traversal several times over,
+  // against a denominator that counted it once.
+  it('merges stops made while creeping through one queue', () => {
+    const target = { lat: 30.4, lng: -87.2 };
+    const points: AnalysisPoint[] = [];
+    let timestamp = 1_000_000;
+    const push = (metres: number, speed: number) => {
+      points.push({ ...offsetBy(target, metres, 0), speed, timestamp, roadName: 'Test Road' });
+      timestamp += 1_000;
+    };
+
+    for (let m = -300; m < -30; m += 10) push(m, 12);
+    for (let i = 0; i < 11; i++) push(-30, 0); // stopped 10 s, 30 m short
+    for (let m = -20; m < 0; m += 10) push(m, 12); // creep forward
+    for (let i = 0; i < 21; i++) push(0, 0); // stopped 20 s at the line
+    for (let m = 10; m <= 300; m += 10) push(m, 12);
+
+    const [approach] = analyzeIntersections([
+      { id: 'creeper', name: 'creeper', startTime: '', points },
+    ]);
+    expect(approach.stopCount).toBe(1);
+    expect(approach.passes).toBe(1);
+    expect(approach.passesClamped).toBe(false);
+    // The wait cost 30 s in total, not the 20 s of its longest fragment.
+    expect(approach.medianDelay).toBe(30_000);
+    expect(approach.totalDelay).toBe(30_000);
+  });
+
+  it('keeps two separate traversals by one drive as two stops', () => {
+    const target = { lat: 30.4, lng: -87.2 };
+    const points: AnalysisPoint[] = [];
+    let timestamp = 1_000_000;
+    const push = (metres: number, speed: number) => {
+      points.push({ ...offsetBy(target, metres, 0), speed, timestamp, roadName: 'Test Road' });
+      timestamp += 1_000;
+    };
+
+    // North through the target, stopping there.
+    for (let m = -300; m < 0; m += 10) push(m, 12);
+    for (let i = 0; i < 11; i++) push(0, 0);
+    for (let m = 10; m <= 600; m += 10) push(m, 12);
+    // Back south past it without stopping.
+    for (let m = 590; m >= -300; m -= 10) push(m, 12);
+    // North through it a second time, stopping again.
+    for (let m = -290; m < 0; m += 10) push(m, 12);
+    for (let i = 0; i < 11; i++) push(0, 0);
+    for (let m = 10; m <= 300; m += 10) push(m, 12);
+
+    const approaches = analyzeIntersections([
+      { id: 'loop', name: 'loop', startTime: '', points },
+    ]);
+    const northbound = approaches.find((a) => a.direction === 'northbound');
+    expect(northbound).toBeDefined();
+    expect(northbound!.stopCount).toBe(2);
+    expect(northbound!.passes).toBe(2);
+  });
+
   it('never reports more stops than passes', () => {
     const drives = [
       northboundDrive('a', 30.4, -87.2, 60, [30, 40]),
