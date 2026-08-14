@@ -49,3 +49,4 @@ drive-*.json
 xcuserdata/
 *.xcworkspace/xcuserdata/
 *.xcappdata/
+.env*
