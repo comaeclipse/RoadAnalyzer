@@ -343,6 +343,29 @@ export function countPasses(
   return passes;
 }
 
+/**
+ * Mean of a set of bearings, in [0, 360).
+ *
+ * Bearings wrap, so averaging them arithmetically puts the mean of 350 and 10
+ * at 180 — pointing the opposite way. Averaging the unit vectors instead keeps
+ * the result on the correct side of north.
+ *
+ * Returns null when the vectors cancel, which means the set has no central
+ * direction to speak of; callers keep whatever they had.
+ */
+export function circularMeanBearing(bearings: number[]): number | null {
+  if (bearings.length === 0) return null;
+  let x = 0;
+  let y = 0;
+  for (const bearing of bearings) {
+    const radians = toRadians(bearing);
+    x += Math.cos(radians);
+    y += Math.sin(radians);
+  }
+  if (Math.abs(x) < 1e-9 && Math.abs(y) < 1e-9) return null;
+  return (toDegrees(Math.atan2(y, x)) + 360) % 360;
+}
+
 function mostCommon(values: string[]): string | null {
   if (values.length === 0) return null;
   const counts = new Map<string, number>();
@@ -365,31 +388,40 @@ export function analyzeIntersections(
   const options = resolveOptions(rawOptions);
   const allStops = drives.flatMap((drive) => detectStops(drive, options));
 
-  // Greedy clustering on position and heading together.
-  const groups: StopEvent[][] = [];
+  // Greedy clustering on position and heading together. Each cluster carries a
+  // running centre and mean heading, so membership is tested against the group
+  // as a whole rather than against whichever stop happened to seed it. With a
+  // frozen seed a slightly skewed first stop drags the accepted cone with it,
+  // and at 60 degrees of tolerance that cone can end up well off the heading
+  // the group actually represents.
+  const clusters: {
+    stops: StopEvent[];
+    lat: number;
+    lng: number;
+    bearing: number;
+  }[] = [];
+
   for (const stop of allStops) {
-    const match = groups.find((group) => {
-      const centre = {
-        lat: group.reduce((sum, s) => sum + s.lat, 0) / group.length,
-        lng: group.reduce((sum, s) => sum + s.lng, 0) / group.length,
-      };
-      const meanBearing = group[0].bearing;
-      return (
-        haversineMeters(stop, centre) <= options.clusterRadius &&
-        bearingDelta(stop.bearing, meanBearing) <= options.bearingTolerance
-      );
-    });
-    if (match) match.push(stop);
-    else groups.push([stop]);
+    const match = clusters.find(
+      (cluster) =>
+        haversineMeters(stop, cluster) <= options.clusterRadius &&
+        bearingDelta(stop.bearing, cluster.bearing) <= options.bearingTolerance
+    );
+    if (match) {
+      match.stops.push(stop);
+      match.lat = match.stops.reduce((sum, s) => sum + s.lat, 0) / match.stops.length;
+      match.lng = match.stops.reduce((sum, s) => sum + s.lng, 0) / match.stops.length;
+      match.bearing = circularMeanBearing(match.stops.map((s) => s.bearing)) ?? match.bearing;
+    } else {
+      clusters.push({ stops: [stop], lat: stop.lat, lng: stop.lng, bearing: stop.bearing });
+    }
   }
 
   const taggedPoints = drives.flatMap((drive) => drive.tags ?? []);
 
-  return groups
-    .map((group, index) => {
-      const lat = group.reduce((sum, s) => sum + s.lat, 0) / group.length;
-      const lng = group.reduce((sum, s) => sum + s.lng, 0) / group.length;
-      const bearing = group[0].bearing;
+  return clusters
+    .map((cluster, index) => {
+      const { stops: group, lat, lng, bearing } = cluster;
       const centre = { lat, lng, bearing };
 
       const passes = drives.reduce(

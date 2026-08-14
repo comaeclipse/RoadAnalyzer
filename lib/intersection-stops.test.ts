@@ -4,6 +4,7 @@ import {
   bearingDegrees,
   bearingDelta,
   cardinal,
+  circularMeanBearing,
   countPasses,
   detectStops,
   effectiveSpeed,
@@ -44,6 +45,48 @@ function northboundDrive(
     for (let i = stopRange[1] + 1; i < count; i++) {
       points[i].lat = held + (i - stopRange[1]) * 10 * METRE_LAT;
     }
+  }
+  return { id, name: id, startTime: '2026-08-01T12:00:00.000Z', points };
+}
+
+/** Point `metres` from `from` along `bearing`, for building synthetic approaches. */
+function offsetBy(
+  from: { lat: number; lng: number },
+  metres: number,
+  bearing: number
+): { lat: number; lng: number } {
+  const radians = (bearing * Math.PI) / 180;
+  return {
+    lat: from.lat + (metres * Math.cos(radians)) / 111_320,
+    lng:
+      from.lng +
+      (metres * Math.sin(radians)) / (111_320 * Math.cos((from.lat * Math.PI) / 180)),
+  };
+}
+
+/**
+ * A drive running straight through `target` on the given heading, stopping
+ * there long enough to register. Used to give one place several approaches
+ * that differ only in direction.
+ */
+function approachingDrive(
+  id: string,
+  target: { lat: number; lng: number },
+  bearing: number,
+  count = 60,
+  stopRange: [number, number] = [30, 40]
+): AnalysisDrive {
+  const [stopStart, stopEnd] = stopRange;
+  const points: AnalysisPoint[] = [];
+  for (let i = 0; i < count; i++) {
+    const metres =
+      i < stopStart ? -(stopStart - i) * 10 : i > stopEnd ? (i - stopEnd) * 10 : 0;
+    points.push({
+      ...offsetBy(target, metres, bearing),
+      speed: i >= stopStart && i <= stopEnd ? 0 : 12,
+      timestamp: 1_000_000 + i * 1_000,
+      roadName: 'Test Road',
+    });
   }
   return { id, name: id, startTime: '2026-08-01T12:00:00.000Z', points };
 }
@@ -209,6 +252,36 @@ describe('countPasses', () => {
   });
 });
 
+describe('circularMeanBearing', () => {
+  it('averages without wrapping the wrong way round north', () => {
+    // The arithmetic mean of these is 180, pointing due south.
+    expect(circularMeanBearing([350, 10])).toBeCloseTo(0, 5);
+  });
+
+  it('averages a plain spread', () => {
+    expect(circularMeanBearing([80, 90, 100])).toBeCloseTo(90, 5);
+  });
+
+  it('returns the sole bearing unchanged', () => {
+    expect(circularMeanBearing([237])).toBeCloseTo(237, 5);
+  });
+
+  it('reports no central direction when the vectors cancel', () => {
+    expect(circularMeanBearing([0, 180])).toBeNull();
+  });
+
+  it('has nothing to average over an empty set', () => {
+    expect(circularMeanBearing([])).toBeNull();
+  });
+
+  it('stays inside [0, 360)', () => {
+    const mean = circularMeanBearing([350, 340, 5]);
+    expect(mean).not.toBeNull();
+    expect(mean!).toBeGreaterThanOrEqual(0);
+    expect(mean!).toBeLessThan(360);
+  });
+});
+
 describe('effectiveSpeed', () => {
   const at = (lat: number, seconds: number, speed: number | null): AnalysisPoint => ({
     lat,
@@ -304,6 +377,43 @@ describe('analyzeIntersections', () => {
     const approaches = analyzeIntersections([first, second]);
     expect(approaches).toHaveLength(1);
     expect(approaches[0].stopCount).toBe(2);
+  });
+
+  // The cluster heading used to be frozen at whichever stop seeded the group,
+  // so one skewed approach steered the accepted cone and the reported
+  // direction for every stop that followed.
+  it('takes its heading from the whole group, not the stop that seeded it', () => {
+    const target = { lat: 30.4, lng: -87.2 };
+    const drives = [
+      approachingDrive('skewed', target, 40),
+      approachingDrive('straight-1', target, 0),
+      approachingDrive('straight-2', target, 0),
+      approachingDrive('straight-3', target, 0),
+    ];
+    const approaches = analyzeIntersections(drives);
+    expect(approaches).toHaveLength(1);
+    expect(approaches[0].stopCount).toBe(4);
+    // Seeded at ~40 deg, but three of four approaches ran due north.
+    expect(approaches[0].bearing).toBeLessThan(20);
+    expect(approaches[0].direction).toBe('northbound');
+  });
+
+  it('does not let a skewed seed change which stops join the cluster', () => {
+    const target = { lat: 30.4, lng: -87.2 };
+    const seedFirst = analyzeIntersections([
+      approachingDrive('skewed', target, 45),
+      approachingDrive('a', target, 0),
+      approachingDrive('b', target, 0),
+    ]);
+    const seedLast = analyzeIntersections([
+      approachingDrive('a', target, 0),
+      approachingDrive('b', target, 0),
+      approachingDrive('skewed', target, 45),
+    ]);
+    expect(seedFirst).toHaveLength(1);
+    expect(seedLast).toHaveLength(1);
+    expect(seedFirst[0].stopCount).toBe(seedLast[0].stopCount);
+    expect(seedFirst[0].bearing).toBeCloseTo(seedLast[0].bearing, 5);
   });
 
   it('never reports more stops than passes', () => {
