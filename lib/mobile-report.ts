@@ -49,7 +49,12 @@ export const MOBILE_TRAFFIC_TAG_KINDS: Record<MobileTrafficTagKind, 'TRAFFIC' | 
 /// distinguishable from one placed against a map feature in the web UI.
 export const MOBILE_TRAFFIC_TAG_FEATURE_TYPE = 'ios-stop';
 
-const MOBILE_TAG_SOURCES = new Set<string>(['LIVE', 'REVIEW']);
+// AUTO is a tag the phone applied itself, without asking, because a settled
+// anchor at this spot has enough consistent driver answers behind it. It is
+// worth keeping distinct from a hand-entered LIVE/REVIEW answer: an auto-tag is
+// the app agreeing with its own history, so anything reconciling labels may
+// want to weight it below a fresh human one.
+const MOBILE_TAG_SOURCES = new Set<string>(['LIVE', 'REVIEW', 'AUTO']);
 const MOBILE_PAUSE_END_REASONS = new Set<string>(['USER', 'STOP', 'RECOVERED']);
 
 /// A stop the driver labelled on the phone. Becomes one TrafficTag row, which
@@ -71,7 +76,7 @@ export interface MobileTrafficTag {
   /// Device-local cluster id for this approach, carried through into the note
   /// so repeat visits remain linkable before server-side clustering runs.
   anchorId?: string | null;
-  taggedDuring?: 'LIVE' | 'REVIEW' | null;
+  taggedDuring?: 'LIVE' | 'REVIEW' | 'AUTO' | null;
 }
 
 export interface MobilePausedInterval {

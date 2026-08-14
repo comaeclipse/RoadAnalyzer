@@ -31,6 +31,20 @@ final class AnchorStore {
     static let centroidWeightFloor = 20
     /// One-off anchors older than this are noise.
     static let pruneAge: TimeInterval = 180 * 24 * 3600
+    /// Human answers an anchor needs before the app will apply its tag without
+    /// asking. A stop sign is deterministic and a red light's identity is fixed,
+    /// so a few consistent answers is plenty; the point is only to be sure this
+    /// is that junction and not a one-off pull-over that happened to sit here.
+    static let autoTagMinAnswers = 3
+    /// Share of those answers that must agree on one tag. A junction with a mixed
+    /// history -- sometimes a red light, sometimes just a crawl the driver calls
+    /// a slowdown -- never clears this and keeps prompting rather than guessing.
+    static let autoTagMinShare = 0.8
+    /// Even a settled anchor prompts every Nth visit. Auto-tags do not vote on
+    /// the anchor, so without this a junction that changed -- a light removed, a
+    /// stop sign added -- would be asserted from stale history forever; the
+    /// periodic prompt is what lets the driver's answer catch up.
+    static let reverifyInterval = 10
 
     private(set) var anchors: [StopAnchor] = []
     private let persistenceURL: URL
@@ -98,9 +112,49 @@ final class AnchorStore {
         }
         anchor.lastSeenAt = max(anchor.lastSeenAt, stop.startedAt)
         anchor.tagCounts[tag.rawValue, default: 0] += 1
+        // A fresh human answer -- the whole point of a re-verify prompt -- starts
+        // the auto-tag streak over, so the anchor stays current.
+        anchor.autoTagStreak = 0
         anchors[index] = anchor
         persist()
         return anchor.id
+    }
+
+    /// The tag to apply at this stop without asking, or nil to prompt.
+    ///
+    /// An anchor auto-resolves only once enough of the driver's own answers agree,
+    /// and they agree strongly. Every `reverifyInterval`-th visit it returns nil
+    /// anyway so the stop is prompted and the answer refreshes the anchor -- a
+    /// junction that changed is re-confirmed, never asserted from memory.
+    ///
+    /// Deliberately does not vote on the anchor: an auto-tag reinforcing its own
+    /// dominant tag would inflate confidence and blind the app to change. It only
+    /// advances the streak, so the caller must persist. Returns nil for a stop
+    /// too poorly placed to match, exactly as `match` and `resolve` do.
+    func autoResolve(for stop: StopEvent) -> (tag: StopTag, anchorId: UUID)? {
+        guard let heading = stop.heading, stop.accuracy <= Self.maxUsableAccuracy,
+              let matched = match(latitude: stop.latitude, longitude: stop.longitude, heading: heading, accuracy: stop.accuracy),
+              let index = anchors.firstIndex(where: { $0.id == matched.id }) else { return nil }
+
+        var anchor = anchors[index]
+        let total = anchor.tagCounts.values.reduce(0, +)
+        guard total >= Self.autoTagMinAnswers,
+              let (topKey, topCount) = anchor.tagCounts.max(by: { $0.value < $1.value }),
+              Double(topCount) / Double(total) >= Self.autoTagMinShare,
+              let tag = StopTag(rawValue: topKey), tag.anchors else { return nil }
+
+        // Time to re-check: leave the streak pinned and prompt. The driver's
+        // answer runs through `resolve`, which resets it and settles the anchor
+        // again. If they dismiss instead, it stays pinned and keeps asking -- the
+        // safe direction is to ask, not to assert.
+        let streak = anchor.autoTagStreak ?? 0
+        guard streak < Self.reverifyInterval else { return nil }
+
+        anchor.autoTagStreak = streak + 1
+        anchor.lastSeenAt = max(anchor.lastSeenAt, stop.startedAt)
+        anchors[index] = anchor
+        persist()
+        return (tag, anchor.id)
     }
 
     /// Smallest circular difference between two bearings, mirroring the

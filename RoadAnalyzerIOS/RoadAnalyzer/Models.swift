@@ -104,7 +104,11 @@ enum StopTag: String, Codable, CaseIterable {
     }
 }
 
-enum StopTagSource: String, Codable { case live = "LIVE", review = "REVIEW" }
+/// Where a stop's tag came from. `.auto` is the app applying a settled anchor's
+/// tag without asking; kept distinct from a driver's `.live`/`.review` answer so
+/// the server can tell a fresh human label from the app agreeing with its own
+/// history.
+enum StopTagSource: String, Codable { case live = "LIVE", review = "REVIEW", auto = "AUTO" }
 
 enum PauseEndReason: String, Codable {
     case user = "USER", stoppedWhilePaused = "STOP", recovered = "RECOVERED"
@@ -163,6 +167,13 @@ struct StopAnchor: Codable, Identifiable {
     var firstSeenAt: Date
     var lastSeenAt: Date
     var tagCounts: [String: Int]
+    /// Auto-applied visits since the last human answer. A settled anchor tags
+    /// itself without prompting, but not forever: once this reaches
+    /// `AnchorStore.reverifyInterval` the next visit asks again, so the driver's
+    /// answer refreshes the anchor and a changed junction is caught rather than
+    /// asserted from memory. A human answer resets it to zero. Optional and
+    /// defaulted so anchor files written before auto-tagging shipped still decode.
+    var autoTagStreak: Int? = nil
 
     var meanHeading: Double? {
         guard headingSin != 0 || headingCos != 0 else { return nil }

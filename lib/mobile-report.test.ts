@@ -90,6 +90,16 @@ describe('traffic tags', () => {
     expect(validateMobileReport({ ...report('3'), trafficTags: [open] }).valid).toBe(false);
   });
 
+  // AUTO is the app applying a settled anchor's tag without prompting. It is a
+  // real source alongside the driver's LIVE/REVIEW answers and must validate.
+  it('accepts an auto-applied tag source', () => {
+    expect(validateMobileReport({ ...report('3'), trafficTags: [tag({ taggedDuring: 'AUTO' })] }).valid).toBe(true);
+  });
+
+  it('rejects an unknown tag source', () => {
+    expect(validateMobileReport({ ...report('3'), trafficTags: [tag({ taggedDuring: 'ROBOT' })] }).valid).toBe(false);
+  });
+
   it('rejects a kind outside the three the phone offers', () => {
     // Real TrafficTagKind values, but not ones a driver can pick mid-drive.
     expect(validateMobileReport({ ...report('3'), trafficTags: [tag({ kind: 'PARKING' })] }).valid).toBe(false);

@@ -32,8 +32,8 @@ struct LiveStats: Equatable {
     /// the whole trace once a second was O(n) in sorts and CLLocation
     /// allocations for a number that changes by a few metres.
     let distance: Double
-    /// Stops the driver was actually asked about; suppressed cluster stops are
-    /// excluded, matching the prompt.
+    /// Stops that counted toward tagging -- prompted, or auto-tagged from a
+    /// settled anchor. Suppressed cluster stops are excluded, matching the prompt.
     let promptedStops: Int
     let taggedStops: Int
     let pauses: [PausedInterval]
@@ -474,7 +474,17 @@ final class RecordingStore: NSObject, ObservableObject {
             // A confirmed stop persists immediately rather than waiting for the
             // every-tenth-sample rule: this is the part that cannot be recomputed.
             persist()
-            if event.suppressed != true { presentPrompt(for: event) }
+            if event.suppressed != true {
+                // A junction the driver has already answered for, consistently,
+                // does not need asking again -- the app applies the settled tag
+                // itself and only prompts when the anchor is new, unsure, or due
+                // for a re-check.
+                if let auto = anchors.autoResolve(for: event) {
+                    applyAutoTag(auto.tag, anchorId: auto.anchorId, to: event.id)
+                } else {
+                    presentPrompt(for: event)
+                }
+            }
 
         case .departed(let stopId, let endedAt, let minimumSpeed):
             guard active != nil else { return }
@@ -560,6 +570,25 @@ final class RecordingStore: NSObject, ObservableObject {
             mutate(&review)
             reviewSession = review
         }
+    }
+
+    /// Apply a tag the anchor is already confident about, without ever showing
+    /// the prompt. Unlike `applyTag` this does not run `AnchorStore.resolve`: an
+    /// auto-tag must not vote on the anchor, or the app would keep agreeing with
+    /// itself and never notice the junction changed. `autoResolve` has already
+    /// matched the anchor and advanced its streak, so the id is passed straight
+    /// through. A short buzz confirms it logged itself; no answer is wanted.
+    private func applyAutoTag(_ tag: StopTag, anchorId: UUID, to id: UUID) {
+        let now = Date.now
+        active?.updateStop(id: id) { stop in
+            stop.tag = tag
+            stop.taggedAt = now
+            stop.taggedDuring = .auto
+            stop.anchorId = anchorId
+        }
+        publishLive()
+        Haptics.tagConfirmed()
+        persist()
     }
 
     private func clearPrompt(markingDismissed: Bool) {
