@@ -93,7 +93,13 @@ export interface AnalysisOptions {
 
 export const DEFAULT_OPTIONS: AnalysisOptions = {
   stoppedSpeed: 0.5,
-  minStopDuration: 5_000,
+  // Matches StopDetector.minStopDuration on the phone. These two must agree:
+  // the phone prompts for a tag at 2 s, so a higher gate here would attach
+  // "Stop sign" labels to approaches whose stop count was measured with a
+  // threshold that excludes stop-sign stops. At 5 s a 1.5-3.5 s stop-sign stop
+  // was invisible to this half, and those rows read as low-probability however
+  // reliably the driver stopped.
+  minStopDuration: 2_000,
   // Queues at major signals can extend beyond a single car length. 60 m keeps
   // successive move-and-stop samples at one approach together without merging
   // opposing approaches.

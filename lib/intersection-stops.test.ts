@@ -160,8 +160,23 @@ describe('detectStops', () => {
   });
 
   it('ignores a pause below the duration threshold', () => {
-    const stops = detectStops(northboundDrive('d1', 30.4, -87.2, 40, [20, 22]));
+    // 1 s stationary: a crawl in traffic, not a stop.
+    const stops = detectStops(northboundDrive('d1', 30.4, -87.2, 40, [20, 21]));
     expect(stops).toHaveLength(0);
+  });
+
+  // The gate used to sit at 5 s while the phone prompted for a tag at 2 s, so
+  // the stops behind every "Stop sign" badge were invisible to this half.
+  it('catches a stop-sign stop, which lasts well under five seconds', () => {
+    const stops = detectStops(northboundDrive('d1', 30.4, -87.2, 40, [20, 23]));
+    expect(stops).toHaveLength(1);
+    expect(stops[0].duration).toBe(3_000);
+  });
+
+  it('agrees with the gate the phone prompts on', () => {
+    // StopDetector.minStopDuration is 2 s; a higher gate here would leave
+    // tagged stop-sign stops uncounted.
+    expect(DEFAULT_OPTIONS.minStopDuration).toBe(2_000);
   });
 
   it('finds nothing on a drive that never stops', () => {
