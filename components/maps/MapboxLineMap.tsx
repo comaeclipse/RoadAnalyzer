@@ -52,6 +52,42 @@ function isFittableCoordinate(position: GeoJSON.Position): position is [number, 
   return true;
 }
 
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Bounds that frame where the data actually clusters, ignoring geographic
+ * outliers. A drive recorded in another city is a perfectly valid coordinate,
+ * so isFittableCoordinate lets it through — but including it in the box zooms
+ * the map out to span both cities. We keep only points within median ± k·MAD
+ * of the cluster on each axis (MAD = median absolute deviation, an
+ * outlier-resistant spread), with a degree floor so a tight single-metro
+ * cluster is never over-trimmed. Returns null when there is nothing to fit.
+ */
+function clusterBounds(coordinates: [number, number][]): mapboxgl.LngLatBounds | null {
+  if (coordinates.length === 0) return null;
+
+  const lngs = coordinates.map((c) => c[0]);
+  const lats = coordinates.map((c) => c[1]);
+  const medLng = median(lngs);
+  const medLat = median(lats);
+  // ~1.5° (~100 mi) floor: never tighter than a metro's spread, but far below
+  // the many-degree gap to an out-of-town stray.
+  const spanLng = Math.max(1.5, median(lngs.map((v) => Math.abs(v - medLng))) * 6);
+  const spanLat = Math.max(1.5, median(lats.map((v) => Math.abs(v - medLat))) * 6);
+
+  const bounds = new mapboxgl.LngLatBounds();
+  for (const [lng, lat] of coordinates) {
+    if (Math.abs(lng - medLng) <= spanLng && Math.abs(lat - medLat) <= spanLat) {
+      bounds.extend([lng, lat]);
+    }
+  }
+  return bounds.isEmpty() ? null : bounds;
+}
+
 export function MapboxLineMap({
   lines,
   className = 'h-[400px] w-full',
@@ -79,7 +115,7 @@ export function MapboxLineMap({
     if (interactive) map.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
     map.on('load', () => {
-      const bounds = new mapboxgl.LngLatBounds();
+      const fitCoordinates: [number, number][] = [];
       let selectedMarker: { marker: mapboxgl.Marker; lng: number; lat: number } | null = null;
       for (const line of stableLines) {
         if (line.coordinates.length < 2) continue;
@@ -102,7 +138,7 @@ export function MapboxLineMap({
           },
         });
         for (const coordinate of line.coordinates) {
-          if (isFittableCoordinate(coordinate)) bounds.extend(coordinate);
+          if (isFittableCoordinate(coordinate)) fitCoordinates.push(coordinate);
         }
         if (onLineClick) {
           map.on('click', layerId, () => onLineClick(line.id));
@@ -134,12 +170,13 @@ export function MapboxLineMap({
         if (marker.label) mapMarker.setPopup(new mapboxgl.Popup().setText(marker.label));
         mapMarker.addTo(map);
         if (onMarkerClick) element.addEventListener('click', () => onMarkerClick(marker.id));
-        if (isFittableCoordinate([marker.lng, marker.lat])) bounds.extend([marker.lng, marker.lat]);
+        if (isFittableCoordinate([marker.lng, marker.lat])) fitCoordinates.push([marker.lng, marker.lat]);
         if (marker.id === selectedMarkerId) {
           selectedMarker = { marker: mapMarker, lng: marker.lng, lat: marker.lat };
         }
       }
-      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 40, maxZoom: 17, duration: 0 });
+      const bounds = clusterBounds(fitCoordinates);
+      if (bounds) map.fitBounds(bounds, { padding: 40, maxZoom: 17, duration: 0 });
       if (selectedMarker) {
         map.flyTo({ center: [selectedMarker.lng, selectedMarker.lat], zoom: 17, duration: 450 });
         selectedMarker.marker.togglePopup();
