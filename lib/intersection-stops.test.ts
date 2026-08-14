@@ -6,7 +6,9 @@ import {
   cardinal,
   countPasses,
   detectStops,
+  effectiveSpeed,
   haversineMeters,
+  resolveOptions,
   wilsonInterval,
   DEFAULT_OPTIONS,
   type AnalysisDrive,
@@ -127,6 +129,50 @@ describe('detectStops', () => {
     const stops = detectStops(northboundDrive('d1', 30.4, -87.2, 40, [25, 39]));
     expect(stops).toHaveLength(1);
   });
+
+  // A dropout at speed used to read as stationary, inventing a stop wherever
+  // reception dipped. Positions keep moving through the gap and settle it.
+  it('does not invent a stop when speed drops out at highway pace', () => {
+    const points: AnalysisPoint[] = [];
+    for (let i = 0; i < 60; i++) {
+      points.push({
+        lat: 30.4 + i * 30 * METRE_LAT, // 30 m/s, ~67 mph
+        lng: -87.2,
+        speed: i >= 30 && i <= 40 ? null : 30,
+        timestamp: 1_000_000 + i * 1_000,
+      });
+    }
+    expect(detectStops({ id: 'x', name: 'x', startTime: '', points })).toHaveLength(0);
+  });
+
+  it('rejects the -1 CoreLocation reports for an invalid speed', () => {
+    const points: AnalysisPoint[] = [];
+    for (let i = 0; i < 60; i++) {
+      points.push({
+        lat: 30.4 + i * 30 * METRE_LAT,
+        lng: -87.2,
+        speed: i >= 30 && i <= 40 ? -1 : 30,
+        timestamp: 1_000_000 + i * 1_000,
+      });
+    }
+    expect(detectStops({ id: 'x', name: 'x', startTime: '', points })).toHaveLength(0);
+  });
+
+  it('still finds a real stop when speed is missing but positions are static', () => {
+    const points: AnalysisPoint[] = [];
+    for (let i = 0; i < 60; i++) {
+      const stopped = i >= 20 && i <= 40;
+      points.push({
+        lat: 30.4 + Math.min(i, 20) * 10 * METRE_LAT,
+        lng: -87.2,
+        speed: stopped ? null : 12,
+        timestamp: 1_000_000 + i * 1_000,
+      });
+    }
+    const stops = detectStops({ id: 'x', name: 'x', startTime: '', points });
+    expect(stops).toHaveLength(1);
+    expect(stops[0].duration).toBeGreaterThanOrEqual(DEFAULT_OPTIONS.minStopDuration);
+  });
 });
 
 describe('countPasses', () => {
@@ -151,6 +197,63 @@ describe('countPasses', () => {
     // 45 m pass radius over 10 m spacing means several samples fall inside.
     const drive = northboundDrive('d1', 30.4, -87.2, 60);
     expect(countPasses(drive, { ...drive.points[30], bearing: 0 })).toBe(1);
+  });
+
+  // The band between passRadius and clusterRadius used to admit stops to the
+  // numerator while rejecting the same ground from the denominator.
+  it('counts a traversal out to the cluster radius, not just the pass radius', () => {
+    const offsetMetres = 50; // outside the raw 45 m, inside the 60 m cluster
+    const lngOffset = offsetMetres / (111_320 * Math.cos((30.4 * Math.PI) / 180));
+    const drive = northboundDrive('d1', 30.4 - 200 * METRE_LAT, -87.2 + lngOffset, 60);
+    expect(countPasses(drive, { lat: 30.4, lng: -87.2, bearing: 0 })).toBe(1);
+  });
+});
+
+describe('effectiveSpeed', () => {
+  const at = (lat: number, seconds: number, speed: number | null): AnalysisPoint => ({
+    lat,
+    lng: -87.2,
+    speed,
+    timestamp: 1_000_000 + seconds * 1_000,
+  });
+
+  it('trusts a reported speed', () => {
+    expect(effectiveSpeed(at(30.4, 1, 12), at(30.4, 0, 12))).toBe(12);
+  });
+
+  it('derives speed from movement when the reading is missing', () => {
+    const previous = at(30.4, 0, null);
+    const point = at(30.4 + 30 * METRE_LAT, 1, null);
+    expect(effectiveSpeed(point, previous)).toBeCloseTo(30, 0);
+  });
+
+  it('treats a static pair with no reading as stationary', () => {
+    expect(effectiveSpeed(at(30.4, 1, null), at(30.4, 0, null))).toBeCloseTo(0, 5);
+  });
+
+  it('gives up rather than guessing without a previous sample', () => {
+    expect(effectiveSpeed(at(30.4, 0, null), null)).toBeNull();
+  });
+
+  it('gives up across a gap too long to describe the motion', () => {
+    expect(effectiveSpeed(at(30.4, 30, null), at(30.4, 0, null))).toBeNull();
+  });
+});
+
+describe('resolveOptions', () => {
+  it('widens the pass radius to contain the cluster radius', () => {
+    const resolved = resolveOptions({ ...DEFAULT_OPTIONS, clusterRadius: 60, passRadius: 45 });
+    expect(resolved.passRadius).toBe(60);
+  });
+
+  it('leaves an already-containing pass radius alone', () => {
+    const options = { ...DEFAULT_OPTIONS, clusterRadius: 40, passRadius: 45 };
+    expect(resolveOptions(options).passRadius).toBe(45);
+  });
+
+  it('holds for the shipped defaults', () => {
+    expect(resolveOptions(DEFAULT_OPTIONS).passRadius)
+      .toBeGreaterThanOrEqual(DEFAULT_OPTIONS.clusterRadius);
   });
 });
 
@@ -195,6 +298,14 @@ describe('analyzeIntersections', () => {
     expect(approaches[0].confidenceLow).toBeLessThan(0.7);
   });
 
+  it('keeps queue-creep stops within 60 m at the same approach', () => {
+    const first = northboundDrive('first', 30.4, -87.2, 80, [30, 40]);
+    const second = northboundDrive('second', 30.4 + 50 * METRE_LAT, -87.2, 80, [30, 40]);
+    const approaches = analyzeIntersections([first, second]);
+    expect(approaches).toHaveLength(1);
+    expect(approaches[0].stopCount).toBe(2);
+  });
+
   it('never reports more stops than passes', () => {
     const drives = [
       northboundDrive('a', 30.4, -87.2, 60, [30, 40]),
@@ -205,6 +316,36 @@ describe('analyzeIntersections', () => {
       expect(approach.stopCount).toBeLessThanOrEqual(approach.passes);
       expect(approach.probability).toBeLessThanOrEqual(1);
     }
+  });
+
+  // The assertion above is satisfied by the clamp alone, so it cannot catch a
+  // denominator that was never measured. This one checks the clamp stayed out
+  // of it, including across the queue spread that motivated the 60 m cluster.
+  it('measures the denominator directly rather than leaning on the clamp', () => {
+    const drives = [
+      northboundDrive('a', 30.4, -87.2, 80, [30, 40]),
+      northboundDrive('b', 30.4 + 50 * METRE_LAT, -87.2, 80, [30, 40]),
+      northboundDrive('c', 30.4 + 25 * METRE_LAT, -87.2, 80, [30, 40]),
+      northboundDrive('d', 30.4, -87.2, 80),
+    ];
+    const approaches = analyzeIntersections(drives);
+    expect(approaches.length).toBeGreaterThan(0);
+    for (const approach of approaches) {
+      expect(approach.passesClamped).toBe(false);
+    }
+  });
+
+  it('counts a non-stopping traversal spread across the queue as a pass', () => {
+    // Stops 50 m apart cluster together; the centroid sits between them. A
+    // drive that rolled through must still land in the denominator.
+    const early = northboundDrive('early', 30.4, -87.2, 80, [30, 40]);
+    const late = northboundDrive('late', 30.4 + 50 * METRE_LAT, -87.2, 80, [30, 40]);
+    const roller = northboundDrive('roller', 30.4, -87.2, 80);
+    const approaches = analyzeIntersections([early, late, roller]);
+    expect(approaches).toHaveLength(1);
+    expect(approaches[0].stopCount).toBe(2);
+    expect(approaches[0].passes).toBe(3);
+    expect(approaches[0].probability).toBeCloseTo(2 / 3, 5);
   });
 
   it('returns nothing when no drive ever stops', () => {

@@ -73,6 +73,10 @@ export async function GET(request: NextRequest) {
         approachCount: approaches.length,
         stopCount: approaches.reduce((total, a) => total + a.stopCount, 0),
         totalDelay: approaches.reduce((total, a) => total + a.totalDelay, 0),
+        // Approaches whose denominator had to be raised to meet the stop count.
+        // Should be 0; a non-zero value means those rates are floors, not
+        // measurements, and is worth investigating rather than rendering plain.
+        clampedCount: approaches.filter((a) => a.passesClamped).length,
         // Surfaced so the page can explain what "stopped" means here rather
         // than leaving the thresholds implicit.
         thresholds: {

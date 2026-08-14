@@ -60,6 +60,11 @@ export interface IntersectionApproach {
   kind: string;
   /** Traversals in this direction, stopped or not. The denominator. */
   passes: number;
+  /**
+   * True when traversals had to be raised to meet the stop count, meaning the
+   * denominator could not be measured directly and the rate is a floor.
+   */
+  passesClamped: boolean;
   stopCount: number;
   probability: number;
   /** Wilson 95% interval, so a 2-of-2 does not read as a certainty. */
@@ -89,11 +94,30 @@ export interface AnalysisOptions {
 export const DEFAULT_OPTIONS: AnalysisOptions = {
   stoppedSpeed: 0.5,
   minStopDuration: 5_000,
-  clusterRadius: 40,
+  // Queues at major signals can extend beyond a single car length. 60 m keeps
+  // successive move-and-stop samples at one approach together without merging
+  // opposing approaches.
+  clusterRadius: 60,
   passRadius: 45,
   bearingTolerance: 60,
   approachLookback: 60,
 };
+
+/**
+ * Force the pass bubble to contain the cluster bubble.
+ *
+ * The numerator and denominator must be measured over the same ground. If
+ * clusterRadius exceeds passRadius there is an annulus where a stop joins a
+ * cluster but the very drive that produced it fails the traversal test, so
+ * probabilities are biased upward — an approach that should read "3 of 7"
+ * reads "3 of 3". Widening passRadius to match is the safe direction: it can
+ * only ever add traversals to the denominator.
+ */
+export function resolveOptions(options: AnalysisOptions): AnalysisOptions {
+  return options.passRadius >= options.clusterRadius
+    ? options
+    : { ...options, passRadius: options.clusterRadius };
+}
 
 const EARTH_RADIUS_M = 6_371_000;
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
@@ -197,6 +221,33 @@ export function approachBearing(
   return points.length > 1 && travelled > 5 ? bearingDegrees(points[0], target) : null;
 }
 
+/**
+ * Speed at a sample, or null when it cannot be established.
+ *
+ * A missing Doppler speed is missing information, not zero. Coalescing it to
+ * zero fires a stop every time GPS quality dips at highway speed, which is the
+ * failure StopDetector.effectiveSpeed on the phone exists to avoid. Positions
+ * survive dropouts that speed does not, so fall back to differencing them, and
+ * return null rather than a guess when even that is unusable.
+ *
+ * CoreLocation reports -1 for an invalid speed, so negatives are rejected
+ * alongside nulls.
+ */
+export function effectiveSpeed(
+  point: AnalysisPoint,
+  previous: AnalysisPoint | null
+): number | null {
+  if (point.speed !== null && point.speed !== undefined && point.speed >= 0) {
+    return point.speed;
+  }
+  if (!previous) return null;
+  const dtSeconds = (point.timestamp - previous.timestamp) / 1000;
+  // Too short and jitter dominates; too long and the gap says nothing about
+  // whether the vehicle was moving throughout it.
+  if (dtSeconds < 0.2 || dtSeconds > 10) return null;
+  return haversineMeters(previous, point) / dtSeconds;
+}
+
 /** Contiguous stationary periods long enough to count as a stop. */
 export function detectStops(
   drive: AnalysisDrive,
@@ -229,7 +280,15 @@ export function detectStops(
   };
 
   for (let i = 0; i < points.length; i++) {
-    const stopped = (points[i].speed ?? 0) <= options.stoppedSpeed;
+    const speed = effectiveSpeed(points[i], i > 0 ? points[i - 1] : null);
+    // Unknown speed ends any open stop rather than extending it. Splitting one
+    // real stop across a dropout costs a stop; treating the dropout as
+    // stationary invents them wherever reception is poor.
+    if (speed === null) {
+      if (start !== null) flush(i - 1);
+      continue;
+    }
+    const stopped = speed <= options.stoppedSpeed;
     if (stopped && start === null) start = i;
     if (!stopped && start !== null) flush(i - 1);
   }
@@ -248,8 +307,9 @@ export function detectStops(
 export function countPasses(
   drive: AnalysisDrive,
   cluster: { lat: number; lng: number; bearing: number },
-  options: AnalysisOptions = DEFAULT_OPTIONS
+  rawOptions: AnalysisOptions = DEFAULT_OPTIONS
 ): number {
+  const options = resolveOptions(rawOptions);
   const { points } = drive;
   let passes = 0;
   let insideSince: number | null = null;
@@ -300,8 +360,9 @@ function mostCommon(values: string[]): string | null {
  */
 export function analyzeIntersections(
   drives: AnalysisDrive[],
-  options: AnalysisOptions = DEFAULT_OPTIONS
+  rawOptions: AnalysisOptions = DEFAULT_OPTIONS
 ): IntersectionApproach[] {
+  const options = resolveOptions(rawOptions);
   const allStops = drives.flatMap((drive) => detectStops(drive, options));
 
   // Greedy clustering on position and heading together.
@@ -335,9 +396,14 @@ export function analyzeIntersections(
         (total, drive) => total + countPasses(drive, centre, options),
         0
       );
-      // A stop implies a pass; guard against a cluster radius narrower than the
-      // pass radius ever producing an impossible ratio.
+      // resolveOptions guarantees every clustered stop sits inside the pass
+      // bubble, so passes should already cover stopCount. The residual case is
+      // a stop whose approach bearing matched the cluster while the bearing at
+      // the nearest point of that visit did not. Clamping keeps the ratio
+      // possible; passesClamped marks the row as measured on shakier ground
+      // rather than hiding the disagreement behind a tidy percentage.
       const stopCount = group.length;
+      const passesClamped = passes < stopCount;
       const trials = Math.max(passes, stopCount);
 
       const durations = group.map((s) => s.duration);
@@ -356,6 +422,7 @@ export function analyzeIntersections(
         roadName: mostCommon(group.flatMap((s) => (s.roadName ? [s.roadName] : []))),
         kind: mostCommon(nearbyKinds) ?? 'UNCLASSIFIED',
         passes: trials,
+        passesClamped,
         stopCount,
         probability: trials === 0 ? 0 : stopCount / trials,
         confidenceLow: low,

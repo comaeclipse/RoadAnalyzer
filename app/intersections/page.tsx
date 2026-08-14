@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { MapboxLineMap, type MapLine, type MapMarker } from '@/components/maps/MapboxLineMap';
 import { PageLayout } from '@/components/layout/PageLayout';
-import { TrafficCone, Clock, Repeat, Hourglass } from 'lucide-react';
+import { TrafficCone, Clock, Repeat, Hourglass, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 
 interface StopEvent {
   driveId: string;
@@ -30,6 +30,7 @@ interface Approach {
   roadName: string | null;
   kind: string;
   passes: number;
+  passesClamped: boolean;
   stopCount: number;
   probability: number;
   confidenceLow: number;
@@ -45,6 +46,7 @@ interface Summary {
   approachCount: number;
   stopCount: number;
   totalDelay: number;
+  clampedCount: number;
   thresholds: {
     stoppedSpeedMph: number;
     minStopSeconds: number;
@@ -72,6 +74,32 @@ function kindLabel(kind: string): string {
   return labels[kind] ?? kind;
 }
 
+type SortKey = 'road' | 'stopped' | 'chance' | 'median' | 'total';
+type SortDir = 'asc' | 'desc';
+
+const SORT_COLUMNS: { key: SortKey; label: string; defaultDir: SortDir }[] = [
+  { key: 'road', label: 'Approach', defaultDir: 'asc' },
+  { key: 'stopped', label: 'Stopped', defaultDir: 'desc' },
+  { key: 'chance', label: 'Chance', defaultDir: 'desc' },
+  { key: 'median', label: 'Median', defaultDir: 'desc' },
+  { key: 'total', label: 'Total', defaultDir: 'desc' },
+];
+
+function sortValue(approach: Approach, key: SortKey): number | string {
+  switch (key) {
+    case 'road':
+      return (approach.roadName ?? 'Unnamed road').toLowerCase();
+    case 'stopped':
+      return approach.stopCount;
+    case 'chance':
+      return approach.probability;
+    case 'median':
+      return approach.medianDelay;
+    case 'total':
+      return approach.totalDelay;
+  }
+}
+
 function probabilityColor(probability: number): string {
   if (probability >= 0.75) return '#dc2626';
   if (probability >= 0.5) return '#f97316';
@@ -95,6 +123,7 @@ export default function IntersectionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [minPasses, setMinPasses] = useState(1);
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -126,6 +155,29 @@ export default function IntersectionsPage() {
     () => approaches.find((a) => a.id === selectedId) ?? null,
     [approaches, selectedId]
   );
+
+  const sortedApproaches = useMemo(() => {
+    if (!sort) return approaches;
+    const { key, dir } = sort;
+    const factor = dir === 'asc' ? 1 : -1;
+    return [...approaches].sort((a, b) => {
+      const av = sortValue(a, key);
+      const bv = sortValue(b, key);
+      if (av < bv) return -1 * factor;
+      if (av > bv) return 1 * factor;
+      return 0;
+    });
+  }, [approaches, sort]);
+
+  const handleSort = useCallback((key: SortKey) => {
+    setSort((current) => {
+      if (current?.key === key) {
+        return { key, dir: current.dir === 'asc' ? 'desc' : 'asc' };
+      }
+      const column = SORT_COLUMNS.find((c) => c.key === key);
+      return { key, dir: column?.defaultDir ?? 'asc' };
+    });
+  }, []);
 
   const markers = useMemo<MapMarker[]>(
     () =>
@@ -245,20 +297,45 @@ export default function IntersectionsPage() {
               </div>
             )}
 
+            {summary.clampedCount > 0 && (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+                <span className="font-medium">{summary.clampedCount}</span> of these approaches
+                recorded more stops than measured traversals, so their traversal count was raised
+                to match. Those percentages are floors rather than measurements.
+              </div>
+            )}
+
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
               <div className="overflow-hidden rounded-lg border border-gray-200">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                     <tr>
-                      <th className="px-3 py-2 font-medium">Approach</th>
-                      <th className="px-3 py-2 font-medium">Stopped</th>
-                      <th className="px-3 py-2 font-medium">Chance</th>
-                      <th className="px-3 py-2 font-medium">Median</th>
-                      <th className="px-3 py-2 font-medium">Total</th>
+                      {SORT_COLUMNS.map((column) => {
+                        const isActive = sort?.key === column.key;
+                        const Icon = isActive
+                          ? sort?.dir === 'asc'
+                            ? ArrowUp
+                            : ArrowDown
+                          : ArrowUpDown;
+                        return (
+                          <th key={column.key} className="px-3 py-2 font-medium">
+                            <button
+                              type="button"
+                              onClick={() => handleSort(column.key)}
+                              className={`flex items-center gap-1 hover:text-gray-700 ${
+                                isActive ? 'text-gray-900' : ''
+                              }`}
+                            >
+                              {column.label}
+                              <Icon className={`h-3 w-3 ${isActive ? '' : 'opacity-40'}`} />
+                            </button>
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {approaches.map((approach) => {
+                    {sortedApproaches.map((approach) => {
                       const isSelected = approach.id === selectedId;
                       return (
                         <tr
