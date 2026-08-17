@@ -47,6 +47,8 @@ export interface SegmentStatisticsResponse {
 export interface HeatmapSegment {
   segmentId: string;
   name: string;
+  /** 'segment' = aggregated, scored road segment; 'route' = one raw drive trace. */
+  kind: 'segment' | 'route';
   geometry: GeoJSON.LineString;
   congestionScore: number | null;
   eventCount: number;

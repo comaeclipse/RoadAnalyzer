@@ -26,13 +26,30 @@ export default function CongestionHeatmap({
 }: CongestionHeatmapProps) {
   const lines = useMemo(() => segments.map((segment) => {
     const selected = segment.segmentId === selectedSegmentId;
+    const isRoute = segment.kind === 'route';
+    // Raw per-drive traces are a faint dashed underlay: thin and low-opacity so
+    // many overlapping drives read as context, not a stack that buries the
+    // aggregated, scored segments drawn on top of them.
+    if (isRoute && !selected) {
+      return {
+        id: segment.segmentId,
+        coordinates: segment.geometry.coordinates,
+        color: congestionColor(segment.congestionScore),
+        width: 2,
+        opacity: selectedSegmentId ? 0.15 : 0.3,
+        dashed: true,
+        label: `Individual drive · ${segment.avgSpeed == null ? 'No speed' : `${(segment.avgSpeed * 2.23694).toFixed(0)} mph avg`}`,
+      };
+    }
     return {
       id: segment.segmentId,
       coordinates: segment.geometry.coordinates,
       color: selected ? '#1f2937' : congestionColor(segment.congestionScore),
       width: selected ? 6 : 4,
       opacity: selectedSegmentId && !selected ? 0.4 : 0.9,
-      label: `${segment.name} · ${segment.congestionScore == null ? 'No score' : `${Math.round(segment.congestionScore)}/100`} · ${segment.eventCount} events`,
+      label: isRoute
+        ? `Individual drive · ${segment.avgSpeed == null ? 'No speed' : `${(segment.avgSpeed * 2.23694).toFixed(0)} mph avg`}`
+        : `${segment.name} · ${segment.congestionScore == null ? 'No score' : `${Math.round(segment.congestionScore)}/100`} · ${segment.eventCount} events`,
     };
   }), [segments, selectedSegmentId]);
 

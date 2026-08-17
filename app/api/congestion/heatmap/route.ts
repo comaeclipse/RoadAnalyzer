@@ -138,6 +138,7 @@ export async function GET(request: NextRequest) {
           return [{
             segmentId: row.segmentId,
             name: segment.name,
+            kind: 'segment' as const,
             geometry: segment.geometry as unknown as GeoJSON.LineString,
             congestionScore: row.congestionScore,
             eventCount: row.eventCount,
@@ -149,6 +150,7 @@ export async function GET(request: NextRequest) {
       segmentHeatmap = stats.map((stat) => ({
         segmentId: stat.segmentId,
         name: stat.segment.name,
+        kind: 'segment' as const,
         geometry: stat.segment.geometry as unknown as GeoJSON.LineString,
         congestionScore: stat.congestionScore,
         eventCount: stat.eventCount,
@@ -171,6 +173,7 @@ export async function GET(request: NextRequest) {
         return {
           segmentId: `route-${route.id}`,
           name: 'Anonymous mobile route',
+          kind: 'route' as const,
           geometry: {
             type: 'LineString' as const,
             coordinates: (
@@ -183,7 +186,9 @@ export async function GET(request: NextRequest) {
           severityBreakdown: { freeFlow: 0, slow: 0, congested: 0, heavy: 0, gridlock: 0 },
         };
       });
-    const allHeatmap = [...segmentHeatmap, ...fallbackRoutes];
+    // Raw drive traces first so the aggregated, scored segments draw on top of
+    // them rather than being buried under a stack of flat-coloured routes.
+    const allHeatmap = [...fallbackRoutes, ...segmentHeatmap];
     const speedValues = visibleRoutes.flatMap((route) => route.gpsData.flatMap((point) => point.speed == null ? [] : [point.speed]));
     const eventCount = visibleRoutes.reduce((count, route) => count + matchingEvents(route).length, 0);
     const heatmapData: HeatmapResponse & { summary: { driveCount: number; eventCount: number; avgSpeed: number | null; updatedAt: string | null } } = {

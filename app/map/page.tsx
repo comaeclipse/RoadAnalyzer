@@ -18,6 +18,7 @@ export default function MapPage() {
   const [segments, setSegments] = useState<HeatmapSegment[]>([]);
   const [summary, setSummary] = useState<HeatmapResponse['summary']>();
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [showDrives, setShowDrives] = useState(false);
   const [severity, setSeverity] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -49,6 +50,14 @@ export default function MapPage() {
     return () => controller.abort();
   }, [severity, from, to]);
 
+  // The aggregated, scored road segments are the default view. Raw per-drive
+  // traces stack and bury them, so they stay hidden until the driver opts in.
+  const routeCount = useMemo(() => segments.filter((segment) => segment.kind === 'route').length, [segments]);
+  const visibleSegments = useMemo(
+    () => (showDrives ? segments : segments.filter((segment) => segment.kind !== 'route')),
+    [segments, showDrives]
+  );
+
   const freshness = useMemo(() => {
     if (!summary?.updatedAt) return 'No reports received yet';
     return `Updated ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(summary.updatedAt))}`;
@@ -71,13 +80,18 @@ export default function MapPage() {
         <label className="text-sm text-gray-600">Minimum event severity<select value={severity} onChange={(event) => setSeverity(event.target.value)} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"><option value="">All reports</option>{severities.map((item) => <option key={item} value={item}>{item.replace('_', ' ')}</option>)}</select></label>
       </div>
 
+      <label className="mb-6 flex items-center gap-2 text-sm text-gray-600">
+        <input type="checkbox" checked={showDrives} onChange={(event) => setShowDrives(event.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+        <span>Show individual drives{routeCount ? ` (${routeCount})` : ''} as a faint overlay</span>
+      </label>
+
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Metric label="Reports" value={summary?.driveCount ?? 0} />
         <Metric label="Congestion events" value={summary?.eventCount ?? 0} />
         <Metric label="Average speed" value={summary?.avgSpeed == null ? '—' : `${(summary.avgSpeed * 2.23694).toFixed(1)} mph`} />
       </div>
 
-      {error ? <Card className="border-red-200 bg-red-50"><CardContent className="py-8 text-center text-red-700">{error}</CardContent></Card> : loading ? <div className="h-[calc(100vh-16rem)] animate-pulse rounded-lg bg-gray-100" /> : segments.length === 0 ? <Card><CardContent className="py-16 text-center text-gray-500">No traffic reports match these filters. Record a drive in the iPhone app, then upload it to populate this map.</CardContent></Card> : <div className="grid grid-cols-1 gap-6 lg:grid-cols-4"><div className="lg:col-span-3 overflow-hidden rounded-lg border border-gray-200"><CongestionHeatmap segments={segments} selectedSegmentId={selectedSegmentId} onSegmentSelect={setSelectedSegmentId} /></div><Legend /></div>}
+      {error ? <Card className="border-red-200 bg-red-50"><CardContent className="py-8 text-center text-red-700">{error}</CardContent></Card> : loading ? <div className="h-[calc(100vh-16rem)] animate-pulse rounded-lg bg-gray-100" /> : segments.length === 0 ? <Card><CardContent className="py-16 text-center text-gray-500">No traffic reports match these filters. Record a drive in the iPhone app, then upload it to populate this map.</CardContent></Card> : visibleSegments.length === 0 ? <Card><CardContent className="py-16 text-center text-gray-500">These filters only returned individual drives — no aggregated road segments yet. Turn on “Show individual drives” above to see them.</CardContent></Card> : <div className="grid grid-cols-1 gap-6 lg:grid-cols-4"><div className="lg:col-span-3 overflow-hidden rounded-lg border border-gray-200"><CongestionHeatmap segments={visibleSegments} selectedSegmentId={selectedSegmentId} onSegmentSelect={setSelectedSegmentId} /></div><Legend /></div>}
     </PageLayout>
   );
 }
