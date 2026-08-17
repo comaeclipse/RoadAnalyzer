@@ -3,6 +3,7 @@ import { CongestionSeverity, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { HeatmapResponse, HeatmapSegment } from '@/types/congestion';
 import { aggregateSegmentStatistics, type SegmentStatsEvent } from '@/lib/post-processing';
+import { dedupeHeatmapSegments } from '@/lib/segment-dedupe';
 
 export const dynamic = 'force-dynamic';
 
@@ -186,9 +187,13 @@ export async function GET(request: NextRequest) {
           severityBreakdown: { freeFlow: 0, slow: 0, congested: 0, heavy: 0, gridlock: 0 },
         };
       });
+    // Mapbox linear-reference ids drift between drives, so one physical stretch
+    // can land as several near-identical rows. Collapse those before drawing.
+    const dedupedSegments = dedupeHeatmapSegments(segmentHeatmap);
+
     // Raw drive traces first so the aggregated, scored segments draw on top of
     // them rather than being buried under a stack of flat-coloured routes.
-    const allHeatmap = [...fallbackRoutes, ...segmentHeatmap];
+    const allHeatmap = [...fallbackRoutes, ...dedupedSegments];
     const speedValues = visibleRoutes.flatMap((route) => route.gpsData.flatMap((point) => point.speed == null ? [] : [point.speed]));
     const eventCount = visibleRoutes.reduce((count, route) => count + matchingEvents(route).length, 0);
     const heatmapData: HeatmapResponse & { summary: { driveCount: number; eventCount: number; avgSpeed: number | null; updatedAt: string | null } } = {
