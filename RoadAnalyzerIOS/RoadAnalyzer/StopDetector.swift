@@ -238,7 +238,17 @@ struct StopDetector {
             return course.heading
         }
         guard let last = trail.last else { return nil }
-        guard let origin = trail.first(where: { Self.distanceBetween($0, last) >= 30 }) ?? trail.first,
+        // Walk back from the stop to the nearest sample at least 30 m behind
+        // it: the shortest baseline that still clears GPS jitter, so the
+        // bearing describes the final approach. Scanning forward from the
+        // oldest sample instead took the *longest* baseline in the buffer,
+        // which is a chord across whatever else is still in the trail -- an
+        // earlier leg of the drive, or the road before a turn -- and routinely
+        // inverted the bearing, sending a northbound stop to its opposing
+        // anchor. The trail holds 60 samples, and CoreLocation slows delivery
+        // while stationary, so that window reaches much further back than the
+        // "last 100 m" the buffer size assumes.
+        guard let origin = trail.last(where: { Self.distanceBetween($0, last) >= 30 }) ?? trail.first,
               Self.distanceBetween(origin, last) >= 10 else { return nil }
         return Self.bearing(from: origin, to: last)
     }
