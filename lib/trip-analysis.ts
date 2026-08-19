@@ -11,7 +11,8 @@ import { calculateBoundingBox } from '@/lib/segment-matching';
 import { tileEdge, tileKeyAt, type SegmentTile } from '@/lib/segment-identity';
 import { analyzeDirections } from '@/lib/trip-directions';
 import { runCongestionAnalysis, type CongestionAnalysisResult } from '@/lib/post-processing';
-import { findMatchingRouteTemplate } from '@/lib/route-template-matching';
+import { matchRouteTemplate, type TemplateSignature } from '@/lib/route-template-matching';
+import { routeSteps, type MatchedSample } from '@/lib/route-signature';
 
 const PROCESSING_STALE_MS = 5 * 60 * 1_000;
 
@@ -312,6 +313,19 @@ function positionAlong(line: GeoJSON.Feature<GeoJSON.LineString>, position: GeoJ
   return Math.max(0, Math.min(1, Number(snapped.properties.location ?? 0) / length));
 }
 
+/** A reference drive's stored matches, as route-signature input. */
+async function referenceSteps(driveId: string): Promise<MatchedSample[]> {
+  const rows = await prisma.gpsSegmentMatch.findMany({
+    where: { gps: { driveId } },
+    select: { segmentId: true, gps: { select: { timestamp: true, distanceFromPrev: true } } },
+  });
+  return rows.map((row) => ({
+    segmentId: row.segmentId,
+    timestamp: Number(row.gps.timestamp),
+    distanceFromPrev: row.gps.distanceFromPrev,
+  }));
+}
+
 export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutcome> {
   const { analysis, claimed } = await claimAnalysis(driveId);
   if (!claimed) {
@@ -337,6 +351,9 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
         accuracy: true,
         heading: true,
         speed: true,
+        // Route identity weights each segment by the ground covered on it, so a
+        // handful of short stubs cannot outvote the arterial.
+        distanceFromPrev: true,
       },
     }),
     prisma.pausedInterval.findMany({
@@ -454,11 +471,35 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
       roadCondition,
       snapshotOnly: true,
     };
-    const templates = await prisma.routeTemplate.findMany({
+    const templateRows = await prisma.routeTemplate.findMany({
       where: { isActive: true },
-      select: { id: true, geometry: true, distance: true, direction: true },
+      select: { id: true, geometry: true, distance: true, direction: true, referenceDriveId: true },
     });
-    const routeTemplateId = findMatchingRouteTemplate(result.geometry, result.distance, directions.dominantDirection, templates);
+    // Each template's signature is its reference drive's own edge sequence,
+    // derived rather than stored. Cheap at this scale; worth denormalising onto
+    // RouteTemplate if the template count ever grows.
+    const templates: TemplateSignature[] = await Promise.all(
+      templateRows.map(async (template) => ({
+        ...template,
+        steps: routeSteps(await referenceSteps(template.referenceDriveId)),
+      }))
+    );
+    // The drive's own sequence comes from the matches just computed, so it
+    // reflects this analysis rather than whatever is still in the table.
+    const distanceById = new Map(gpsSamples.map((sample) => [sample.id, sample.distanceFromPrev]));
+    const timestampById = new Map(gpsSamples.map((sample) => [sample.id, Number(sample.timestamp)]));
+    const driveSteps = routeSteps(matches.map((match) => ({
+      segmentId: match.segmentId,
+      timestamp: timestampById.get(match.gpsId) ?? 0,
+      distanceFromPrev: distanceById.get(match.gpsId) ?? null,
+    })));
+    const routeMatch = matchRouteTemplate({
+      steps: driveSteps,
+      geometry: result.geometry,
+      distance: result.distance,
+      direction: directions.dominantDirection,
+    }, templates);
+    const routeTemplateId = routeMatch?.templateId ?? null;
     const finalStatus: TripAnalysisStatus = result.partial ? 'PARTIAL' : 'COMPLETED';
     await prisma.$transaction([
       prisma.gpsSegmentMatch.deleteMany({ where: { gps: { driveId } } }),
