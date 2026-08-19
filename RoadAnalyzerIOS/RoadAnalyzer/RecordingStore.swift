@@ -132,15 +132,36 @@ final class RecordingStore: NSObject, ObservableObject {
         encoder.outputFormatting = [.sortedKeys]
         return encoder
     }()
+    private let persistBox = SnapshotBox()
 
     /// Map polylines under construction. `routeSpans` is published from this;
     /// appending happens here so the published copy is never mutated in place.
+    ///
+    /// These hold drawing resolution, not the trace. The trace is
+    /// `session.locations`; nothing measures anything from here.
     private var spanBuffer: [[CLLocationCoordinate2D]] = []
     private var lastRouteSample: LocationSample?
     /// Set after a pause or a restore, so the next sample opens a new span
     /// rather than drawing a line across wherever the driver went with GPS off.
     private var routeBreakPending = true
     private var travelledDistance: Double = 0
+
+    /// Most coordinates the map is ever given.
+    ///
+    /// MapPolyline is rebuilt and re-tessellated on every publish, so what it
+    /// costs is the length of the drive unless something bounds it: an hour in,
+    /// every fix hands MapKit another thousand points to walk, and that is main
+    /// thread work growing with the session in exactly the way the rest of this
+    /// file was changed to avoid. A phone cannot resolve a thousand points
+    /// across a route anyway.
+    private static let maxDrawnCoordinates = 1_000
+    /// Closest two drawn coordinates may be. Doubles each time the budget is
+    /// spent, so the drawn route keeps roughly constant weight however far the
+    /// drive goes.
+    private static let initialDrawSpacing: CLLocationDistance = 8
+    private var drawSpacing = RecordingStore.initialDrawSpacing
+    private var drawnCoordinates = 0
+    private var lastDrawnCoordinate: CLLocationCoordinate2D?
 
     override init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -432,13 +453,50 @@ final class RecordingStore: NSObject, ObservableObject {
         if routeBreakPending || spanBuffer.isEmpty {
             spanBuffer.append([sample.coordinate])
             routeBreakPending = false
+            drawnCoordinates += 1
+            lastDrawnCoordinate = sample.coordinate
         } else {
-            spanBuffer[spanBuffer.count - 1].append(sample.coordinate)
+            // Distance is accumulated from every fix regardless of what gets
+            // drawn: the number on screen is the drive's, not the polyline's.
             if let previous = lastRouteSample {
                 travelledDistance += TrafficAnalyzer.distance(previous.latitude, previous.longitude, sample.latitude, sample.longitude)
             }
+            if farEnoughToDraw(sample.coordinate) {
+                spanBuffer[spanBuffer.count - 1].append(sample.coordinate)
+                lastDrawnCoordinate = sample.coordinate
+                drawnCoordinates += 1
+                if drawnCoordinates > Self.maxDrawnCoordinates { thinDrawnRoute() }
+            }
         }
         lastRouteSample = sample
+    }
+
+    /// Whether a fix moved far enough to be worth another vertex. Sitting at a
+    /// light produces sixty coordinates on top of each other, none of which the
+    /// map can show.
+    private func farEnoughToDraw(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        guard let last = lastDrawnCoordinate else { return true }
+        return TrafficAnalyzer.distance(last.latitude, last.longitude, coordinate.latitude, coordinate.longitude) >= drawSpacing
+    }
+
+    /// Halve the drawn route and require twice the spacing from here on.
+    ///
+    /// Amortised to nothing: each doubling costs one walk of a bounded array and
+    /// buys twice the distance before the next. The end of each span is kept
+    /// whatever the parity, so the line still reaches where the driver is.
+    private func thinDrawnRoute() {
+        spanBuffer = spanBuffer.map { span in
+            guard span.count > 2 else { return span }
+            var thinned: [CLLocationCoordinate2D] = []
+            thinned.reserveCapacity(span.count / 2 + 1)
+            for (index, coordinate) in span.enumerated() where index.isMultiple(of: 2) {
+                thinned.append(coordinate)
+            }
+            if !(span.count - 1).isMultiple(of: 2) { thinned.append(span[span.count - 1]) }
+            return thinned
+        }
+        drawnCoordinates = spanBuffer.reduce(0) { $0 + $1.count }
+        drawSpacing *= 2
     }
 
     private func resetRoute() {
@@ -446,6 +504,9 @@ final class RecordingStore: NSObject, ObservableObject {
         lastRouteSample = nil
         routeBreakPending = true
         travelledDistance = 0
+        drawSpacing = Self.initialDrawSpacing
+        drawnCoordinates = 0
+        lastDrawnCoordinate = nil
         routeSpans = []
     }
 
@@ -454,6 +515,12 @@ final class RecordingStore: NSObject, ObservableObject {
     private func rebuildRoute(from session: RecordingSession) {
         spanBuffer = TrafficAnalyzer.spans(of: session.locations, excluding: session.pauses).map { $0.map(\.coordinate) }
         travelledDistance = TrafficAnalyzer.totalDistance(session.locations, excluding: session.pauses)
+        // A restored drive arrives at full resolution, so bring it down to the
+        // same budget a live one would have reached.
+        drawSpacing = Self.initialDrawSpacing
+        drawnCoordinates = spanBuffer.reduce(0) { $0 + $1.count }
+        while drawnCoordinates > Self.maxDrawnCoordinates { thinDrawnRoute() }
+        lastDrawnCoordinate = spanBuffer.last?.last
         lastRouteSample = session.locations.max { $0.timestamp < $1.timestamp }
         // A restored drive resumes into a fresh span: whatever happened while
         // the app was gone is not a straight line worth drawing.
@@ -692,13 +759,24 @@ final class RecordingStore: NSObject, ObservableObject {
     /// was a multi-hundred-millisecond main-thread hang every few seconds.
     /// Taking the snapshot is cheap -- the arrays are only retained, not copied,
     /// and the session is never mutated in place afterwards.
+    ///
+    /// Requests coalesce. persist() is called every ten fixes, and what it costs
+    /// grows with the drive, so a long enough one can ask for writes faster than
+    /// they finish. Queuing each request would then pile up snapshots that each
+    /// pin their own copy of the session -- the arrays diverge as soon as the
+    /// live one is appended to again -- and the writes would fall further behind
+    /// the further they got. A newer snapshot supersedes an older one, so only
+    /// the latest is kept and the running pass picks it up.
     private func persist() {
         refreshCounts()
         let snapshot = SavedSessions(active: active, pending: pending, review: reviewSession)
+        guard persistBox.offer(snapshot) else { return }
         let url = persistenceURL
-        persistQueue.async { [encoder = persistEncoder] in
-            guard let data = try? encoder.encode(snapshot) else { return }
-            try? data.write(to: url, options: .atomic)
+        persistQueue.async { [box = persistBox, encoder = persistEncoder] in
+            while let snapshot = box.next() {
+                guard let data = try? encoder.encode(snapshot) else { continue }
+                try? data.write(to: url, options: .atomic)
+            }
         }
     }
 
@@ -739,6 +817,41 @@ extension RecordingStore: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         let message = error.localizedDescription
         Task { @MainActor [weak self] in self?.statusMessage = "Location error: \(message)" }
+    }
+}
+
+/// The latest state waiting to be written, and whether a write pass is running.
+///
+/// Both are one decision, so they are guarded together: a caller either starts
+/// the pass or hands its snapshot to the pass already running. Splitting them
+/// across the main actor and the write queue would leave a window in which the
+/// pass finishes just as a snapshot arrives and nobody writes it.
+private final class SnapshotBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: SavedSessions?
+    private var writing = false
+
+    /// Store the newest state. True when the caller should start a write pass.
+    func offer(_ snapshot: SavedSessions) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        pending = snapshot
+        if writing { return false }
+        writing = true
+        return true
+    }
+
+    /// The next state to write, or nil once there is nothing left -- which also
+    /// ends the pass, under the same lock that would start another.
+    func next() -> SavedSessions? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let snapshot = pending {
+            pending = nil
+            return snapshot
+        }
+        writing = false
+        return nil
     }
 }
 
