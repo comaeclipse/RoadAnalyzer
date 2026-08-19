@@ -552,6 +552,76 @@ describe('analyzeIntersections', () => {
     expect(approaches[0].totalDelay).toBeGreaterThanOrEqual(approaches[1].totalDelay);
   });
 
+  it('ignores a stationary period too long to be a traffic control', () => {
+    // 10 minutes of samples at one spot: the car parked, not the car waiting.
+    const drive = northboundDrive('parked', 30.4, -87.2, 700, [30, 630]);
+    expect(detectStops(drive)).toHaveLength(0);
+    expect(analyzeIntersections([drive])).toEqual([]);
+  });
+
+  it('keeps a long wait that is still within a plausible signal cycle', () => {
+    const drive = northboundDrive('slow-light', 30.4, -87.2, 200, [30, 170]);
+    expect(detectStops(drive)).toHaveLength(1);
+  });
+
+  it('will not take a kind from a tag facing the other way', () => {
+    const drive = northboundDrive('a', 30.4, -87.2, 60, [30, 40]);
+    // On the opposing stop line: close enough to fall inside the cluster
+    // radius, but belonging to the southbound approach.
+    const opposing = offsetBy(drive.points[30], 30, 0);
+    drive.tags = [{ ...opposing, kind: 'STOP_SIGN', bearing: 180 }];
+    expect(analyzeIntersections([drive])[0].kind).toBe('UNCLASSIFIED');
+  });
+
+  it('takes a kind from a tag facing the same way', () => {
+    const drive = northboundDrive('a', 30.4, -87.2, 60, [30, 40]);
+    const ahead = offsetBy(drive.points[30], 30, 0);
+    drive.tags = [{ ...ahead, kind: 'STOP_SIGN', bearing: 0 }];
+    expect(analyzeIntersections([drive])[0].kind).toBe('STOP_SIGN');
+  });
+
+  it('recovers a missing tag heading from the drive that placed it', () => {
+    const drive = northboundDrive('a', 30.4, -87.2, 60, [30, 40]);
+    const opposing = offsetBy(drive.points[30], 30, 0);
+    // No bearing on the tag, but its timestamp names a moment in this drive --
+    // and this drive was heading north, so the tag cannot belong to the
+    // southbound approach whatever its position suggests.
+    drive.tags = [{ ...opposing, kind: 'STOP_SIGN', timestamp: drive.points[30].timestamp }];
+    expect(analyzeIntersections([drive])[0].kind).toBe('STOP_SIGN');
+  });
+
+  it('distrusts a headingless tag beyond the tighter radius', () => {
+    const drive = northboundDrive('a', 30.4, -87.2, 60, [30, 40]);
+    const far = offsetBy(drive.points[30], 40, 0);
+    drive.tags = [{ ...far, kind: 'STOP_SIGN' }];
+    expect(analyzeIntersections([drive])[0].kind).toBe('UNCLASSIFIED');
+  });
+
+  it('ranks by expected delay per traversal, not by total time lost', () => {
+    // Caught every time but released quickly, against a longer wait caught
+    // half as often. The second costs more per trip; the first accumulates
+    // more total delay simply by being driven more.
+    const always = Array.from({ length: 6 }, (_, i) =>
+      northboundDrive(`always-${i}`, 30.4, -87.2, 60, [30, 40]));
+    const sometimes = [
+      northboundDrive('sometimes-0', 30.5, -87.2, 60, [30, 59]),
+      northboundDrive('sometimes-1', 30.5, -87.2, 60),
+    ];
+    const approaches = analyzeIntersections([...always, ...sometimes]);
+
+    expect(approaches[0].expectedDelay).toBeGreaterThan(approaches[1].expectedDelay);
+    expect(approaches[0].totalDelay).toBeLessThan(approaches[1].totalDelay);
+  });
+
+  it('gives an approach the same id however the table is ranked', () => {
+    const drive = northboundDrive('a', 30.4, -87.2, 60, [30, 40]);
+    const other = northboundDrive('b', 30.6, -87.2, 60, [30, 55]);
+    const alone = analyzeIntersections([drive])[0].id;
+    const ranked = analyzeIntersections([drive, other]).find((a) => a.stops[0].driveId === 'a');
+    expect(ranked?.id).toBe(alone);
+    expect(alone).not.toMatch(/approach-\d/);
+  });
+
   it('respects a custom stopped-speed threshold', () => {
     const drive = northboundDrive('a', 30.4, -87.2, 60);
     for (let i = 30; i <= 40; i++) drive.points[i].speed = 1.5;

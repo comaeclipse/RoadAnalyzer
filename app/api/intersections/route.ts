@@ -8,6 +8,21 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * The approach heading the phone recorded with a tag.
+ *
+ * TrafficTag has no column for it, so ingest packs it into the free-text note
+ * as `approach=<degrees>` alongside the anchor id. Tags predating that, and any
+ * placed in the web UI, have none; analyzeIntersections recovers those from the
+ * drive's own trace.
+ */
+function approachHeadingFromNote(note: string | null): number | null {
+  const match = /approach=(\d+(?:\.\d+)?)/.exec(note ?? '');
+  if (!match) return null;
+  const degrees = Number(match[1]);
+  return Number.isFinite(degrees) ? ((degrees % 360) + 360) % 360 : null;
+}
+
 // GET /api/intersections - Rank recurring stops by approach direction
 export async function GET(request: NextRequest) {
   try {
@@ -38,7 +53,9 @@ export async function GET(request: NextRequest) {
             },
           },
         },
-        trafficTags: { select: { latitude: true, longitude: true, kind: true } },
+        trafficTags: {
+          select: { latitude: true, longitude: true, kind: true, startTime: true, note: true },
+        },
       },
     });
 
@@ -59,6 +76,8 @@ export async function GET(request: NextRequest) {
           lat: tag.latitude,
           lng: tag.longitude,
           kind: tag.kind,
+          bearing: approachHeadingFromNote(tag.note),
+          timestamp: tag.startTime.getTime(),
         })),
       }));
 

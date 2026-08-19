@@ -26,6 +26,17 @@ export interface AnalysisTag {
   lat: number;
   lng: number;
   kind: string;
+  /**
+   * Approach heading when the driver placed the tag, degrees clockwise from
+   * north. Null when unknown, in which case the tag is only trusted very close
+   * to a cluster centre.
+   */
+  bearing?: number | null;
+  /**
+   * When the tag was placed. Used to recover a bearing from the drive's own
+   * trace for tags that carry none.
+   */
+  timestamp?: number | null;
 }
 
 export interface AnalysisDrive {
@@ -73,6 +84,14 @@ export interface IntersectionApproach {
   medianDelay: number;
   maxDelay: number;
   totalDelay: number;
+  /**
+   * Time this approach costs on an average traversal: probability x median
+   * delay. The ranking metric, because neither half answers the question alone
+   * -- a light you always catch but that releases you in 10 s costs less than
+   * one you catch a third of the time and then sit at for 90 s, and total delay
+   * just measures how often you have driven the road.
+   */
+  expectedDelay: number;
   stops: StopEvent[];
 }
 
@@ -89,6 +108,17 @@ export interface AnalysisOptions {
   bearingTolerance: number;
   /** Distance back along the trace used to measure approach heading (m). */
   approachLookback: number;
+  /**
+   * Longest stationary period that can still be a traffic control (ms).
+   * Anything longer is the car parked, not the car waiting.
+   */
+  maxStopDuration: number;
+  /**
+   * Radius within which a tag carrying no approach heading may still label a
+   * cluster (m). Tighter than clusterRadius because without a heading, position
+   * is the only evidence that the tag belongs to this approach.
+   */
+  taglessRadius: number;
 }
 
 export const DEFAULT_OPTIONS: AnalysisOptions = {
@@ -107,6 +137,15 @@ export const DEFAULT_OPTIONS: AnalysisOptions = {
   passRadius: 45,
   bearingTolerance: 60,
   approachLookback: 60,
+  // Signal cycles top out near 150 s even on the worst arterials, and the
+  // longest stop in the current dataset that is plausibly a light is 149 s.
+  // The one period above this bound is 17 minutes -- the car parked partway
+  // through a drive. Left in, it ranked first by total delay and would rank
+  // first by expected delay too, describing an errand as the worst light on
+  // the commute. The traversal still counts in the denominator; only the
+  // stationary period is discarded.
+  maxStopDuration: 300_000,
+  taglessRadius: 25,
 };
 
 /**
@@ -266,7 +305,10 @@ export function detectStops(
   const flush = (endIndex: number) => {
     if (start === null) return;
     const duration = points[endIndex].timestamp - points[start].timestamp;
-    if (duration >= options.minStopDuration) {
+    // Bounded at both ends. Below minStopDuration is a crawl rather than a
+    // stop; above maxStopDuration is parking, which no signal explains and
+    // which would otherwise dominate every delay figure it touches.
+    if (duration >= options.minStopDuration && duration <= options.maxStopDuration) {
       const bearing = approachBearing(points, start, options.approachLookback);
       if (bearing !== null) {
         events.push({
@@ -452,6 +494,45 @@ export function circularMeanBearing(bearings: number[]): number | null {
   return (toDegrees(Math.atan2(y, x)) + 360) % 360;
 }
 
+/**
+ * Approach heading of the drive at `timestamp`, or null when the trace has
+ * nothing usable near it.
+ *
+ * Tags placed on the phone carry the heading the driver was travelling; older
+ * ones, and any placed in the web UI, do not. Since the tag names a moment in a
+ * drive we already hold, the heading can be read back off the trace instead of
+ * being treated as unknown.
+ */
+export function bearingAtTime(
+  drive: AnalysisDrive,
+  timestamp: number | null,
+  options: AnalysisOptions = DEFAULT_OPTIONS
+): number | null {
+  if (timestamp == null || drive.points.length < 2) return null;
+  let nearest = -1;
+  let nearestGap = Infinity;
+  drive.points.forEach((point, index) => {
+    const gap = Math.abs(point.timestamp - timestamp);
+    if (gap < nearestGap) {
+      nearestGap = gap;
+      nearest = index;
+    }
+  });
+  // Beyond this the nearest fix says nothing about where the car was pointing
+  // when the tag was placed.
+  if (nearest < 0 || nearestGap > 15_000) return null;
+  return approachBearing(drive.points, nearest, options.approachLookback);
+}
+
+/**
+ * Deterministic identity for an approach: where it is, and which way you are
+ * going through it. Rounded to about 11 m, which is inside the cluster radius,
+ * so the same approach keeps its id as its centroid drifts with new stops.
+ */
+export function approachId(lat: number, lng: number, bearing: number): string {
+  return `${lat.toFixed(4)}:${lng.toFixed(4)}:${cardinal(bearing)}`;
+}
+
 function mostCommon(values: string[]): string | null {
   if (values.length === 0) return null;
   const counts = new Map<string, number>();
@@ -463,9 +544,13 @@ function mostCommon(values: string[]): string | null {
  * Group stops into approach clusters, then measure each against how often the
  * same approach was traversed at all.
  *
- * Results are ranked by how much time the approach actually costs, since a
- * light stopped at 3 times for 90s each matters more than one stopped at 5
- * times for 4s.
+ * Results are ranked by expected delay per traversal, which is the only one of
+ * the available figures that answers "which of these costs my commute the most
+ * time?". Stop probability alone over-weights a light you always catch but that
+ * releases you quickly; total delay alone is confounded by exposure, since an
+ * approach driven 40 times out-ranks one driven 4 times whatever happens at
+ * either. Exposure is still worth filtering on separately: an approach measured
+ * over one traversal can report a large expected delay on no evidence.
  */
 export function analyzeIntersections(
   drives: AnalysisDrive[],
@@ -488,11 +573,18 @@ export function analyzeIntersections(
   }[] = [];
 
   for (const stop of allStops) {
-    const match = clusters.find(
-      (cluster) =>
-        haversineMeters(stop, cluster) <= options.clusterRadius &&
-        bearingDelta(stop.bearing, cluster.bearing) <= options.bearingTolerance
-    );
+    // Nearest acceptable cluster, not the first one found. Where two clusters
+    // are both in range, taking the first makes membership depend on the order
+    // the groups happened to be created in.
+    let match: (typeof clusters)[number] | null = null;
+    let matchDistance = Infinity;
+    for (const cluster of clusters) {
+      const distance = haversineMeters(stop, cluster);
+      if (distance > options.clusterRadius || distance >= matchDistance) continue;
+      if (bearingDelta(stop.bearing, cluster.bearing) > options.bearingTolerance) continue;
+      match = cluster;
+      matchDistance = distance;
+    }
     if (match) {
       match.stops.push(stop);
       match.lat = match.stops.reduce((sum, s) => sum + s.lat, 0) / match.stops.length;
@@ -503,10 +595,20 @@ export function analyzeIntersections(
     }
   }
 
-  const taggedPoints = drives.flatMap((drive) => drive.tags ?? []);
+  // A tag's own approach heading, recovered from the drive's trace when the
+  // tag did not carry one. Without it a tag on the opposing stop line labels
+  // this approach: at a 60 m cluster radius both stop lines of an ordinary
+  // intersection sit inside the bubble, which is exactly the merge the rest of
+  // this module refuses to make.
+  const taggedPoints: AnalysisTag[] = drives.flatMap((drive) =>
+    (drive.tags ?? []).map((tag) => ({
+      ...tag,
+      bearing: tag.bearing ?? bearingAtTime(drive, tag.timestamp ?? null, options),
+    }))
+  );
 
   return clusters
-    .map((cluster, index) => {
+    .map((cluster) => {
       const { lat, lng, bearing } = cluster;
       const centre = { lat, lng, bearing };
 
@@ -533,13 +635,24 @@ export function analyzeIntersections(
 
       const durations = group.map((s) => s.duration);
       const nearbyKinds = taggedPoints
-        .filter((tag) => haversineMeters(tag, { lat, lng }) <= options.clusterRadius)
+        .filter((tag) => {
+          const distance = haversineMeters(tag, { lat, lng });
+          if (tag.bearing == null) return distance <= options.taglessRadius;
+          return distance <= options.clusterRadius &&
+            bearingDelta(tag.bearing, bearing) <= options.bearingTolerance;
+        })
         .map((tag) => tag.kind);
 
       const { low, high } = wilsonInterval(stopCount, trials);
+      const probability = trials === 0 ? 0 : stopCount / trials;
+      const medianDelay = median(durations);
 
       return {
-        id: `approach-${index}`,
+        // Identity follows the place, not the sort order. Loop indices were
+        // reassigned by rank whenever a drive was added, so the page's attempt
+        // to hold a selection across a refetch could silently re-point at a
+        // different intersection.
+        id: approachId(lat, lng, bearing),
         lat,
         lng,
         bearing,
@@ -549,14 +662,15 @@ export function analyzeIntersections(
         passes: trials,
         passesClamped,
         stopCount,
-        probability: trials === 0 ? 0 : stopCount / trials,
+        probability,
         confidenceLow: low,
         confidenceHigh: high,
-        medianDelay: median(durations),
+        medianDelay,
         maxDelay: Math.max(...durations),
         totalDelay: durations.reduce((sum, value) => sum + value, 0),
+        expectedDelay: probability * medianDelay,
         stops: [...group].sort((a, b) => b.timestamp - a.timestamp),
       };
     })
-    .sort((a, b) => b.totalDelay - a.totalDelay);
+    .sort((a, b) => b.expectedDelay - a.expectedDelay);
 }

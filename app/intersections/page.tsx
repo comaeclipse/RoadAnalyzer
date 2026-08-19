@@ -38,6 +38,7 @@ interface Approach {
   medianDelay: number;
   maxDelay: number;
   totalDelay: number;
+  expectedDelay: number;
   stops: StopEvent[];
 }
 
@@ -74,7 +75,7 @@ function kindLabel(kind: string): string {
   return labels[kind] ?? kind;
 }
 
-type SortKey = 'road' | 'stopped' | 'chance' | 'median' | 'total';
+type SortKey = 'road' | 'stopped' | 'chance' | 'median' | 'expected' | 'total';
 type SortDir = 'asc' | 'desc';
 
 const SORT_COLUMNS: { key: SortKey; label: string; defaultDir: SortDir }[] = [
@@ -82,6 +83,7 @@ const SORT_COLUMNS: { key: SortKey; label: string; defaultDir: SortDir }[] = [
   { key: 'stopped', label: 'Stopped', defaultDir: 'desc' },
   { key: 'chance', label: 'Chance', defaultDir: 'desc' },
   { key: 'median', label: 'Median', defaultDir: 'desc' },
+  { key: 'expected', label: 'Cost / trip', defaultDir: 'desc' },
   { key: 'total', label: 'Total', defaultDir: 'desc' },
 ];
 
@@ -95,6 +97,8 @@ function sortValue(approach: Approach, key: SortKey): number | string {
       return approach.probability;
     case 'median':
       return approach.medianDelay;
+    case 'expected':
+      return approach.expectedDelay;
     case 'total':
       return approach.totalDelay;
   }
@@ -122,7 +126,7 @@ export default function IntersectionsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [minPasses, setMinPasses] = useState(1);
+  const [minPasses, setMinPasses] = useState(3);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
 
   const load = useCallback(async () => {
@@ -229,7 +233,9 @@ export default function IntersectionsPage() {
         </div>
         <p className="mb-6 text-sm text-gray-500">
           Places you stop, grouped by approach direction. The two sides of one intersection face
-          different signals, so they are counted separately.
+          different signals, so they are counted separately. Ranked by cost per trip — how much
+          time an approach takes out of an average traversal, which is its chance of stopping you
+          multiplied by how long it holds you when it does.
         </p>
 
         {loading && (
@@ -376,6 +382,9 @@ export default function IntersectionsPage() {
                           </td>
                           <td className="whitespace-nowrap px-3 py-2.5 text-gray-600">
                             {formatSeconds(approach.medianDelay)}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2.5 font-medium text-gray-900">
+                            {formatSeconds(approach.expectedDelay)}
                           </td>
                           <td className="whitespace-nowrap px-3 py-2.5 text-gray-600">
                             {formatSeconds(approach.totalDelay)}
