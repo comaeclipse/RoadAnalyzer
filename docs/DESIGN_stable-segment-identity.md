@@ -182,11 +182,14 @@ extent. What it changes:
   road-kilometres covered rather than drives: re-driving the commute adds none.
 - **A segment is no longer a junction-to-junction stretch.** Tile boundaries fall
   where the grid says. Median tile is 450 m, max 1034 m.
-- **Congestion events break at tile boundaries.** `detectCongestion` already ends
-  an event when the segment changes, so a jam spanning two tiles becomes two
-  events for drives analysed from here on. Events already stored are repointed,
-  not re-detected, so history and new data disagree on this until congestion
-  analysis is re-run over the back catalogue.
+- **Congestion events break on the road, not the tile.** `detectCongestion` used
+  to end an event when the segment changed, which was a proxy for "different
+  road" back when a segment was a whole matched road. Against 450 m tiles it cut
+  jams at grid lines and discarded the fragments under `minDuration`, measured at
+  a 13% loss of congestion time. Detection now compares `roadId` — the road half
+  of the tile key — and files each event under the tile it spent longest on, so
+  the time survives and the location stays specific. Re-detected across the back
+  catalogue on 2026-08-19: 138 events / 11244 s became 141 / 11544 s.
 - **Unnamed edges keep the old per-sourceId row.** Nothing distinguishes two
   unnamed stubs in one cell, per §5.2.
 

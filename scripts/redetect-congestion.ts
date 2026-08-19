@@ -28,6 +28,7 @@ import './load-env';
 
 import { prisma } from '../lib/prisma';
 import { detectCongestion } from '../lib/congestion-detection';
+import { roadOfKey } from '../lib/segment-identity';
 
 const APPLY = process.argv.includes('--apply');
 
@@ -57,7 +58,7 @@ async function main() {
         timestamp: true,
         speed: true,
         distanceFromPrev: true,
-        segmentMatches: { take: 1, select: { segmentId: true } },
+        segmentMatches: { take: 1, select: { segmentId: true, segment: { select: { spatialKey: true } } } },
       },
     });
     const existing = await prisma.congestionEvent.findMany({
@@ -68,6 +69,7 @@ async function main() {
     const events = detectCongestion(samples.map(({ segmentMatches, ...gps }) => ({
       ...gps,
       segmentId: segmentMatches[0]?.segmentId,
+      roadId: roadOfKey(segmentMatches[0]?.segment.spatialKey) ?? segmentMatches[0]?.segmentId,
     })));
 
     pending.set(drive.id, events);

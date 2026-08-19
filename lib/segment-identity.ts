@@ -192,3 +192,19 @@ export function tileEdge(edge: IdentifiableEdge): SegmentTile[] {
     geometry: { type: 'LineString' as const, coordinates: positions },
   }));
 }
+
+/**
+ * The road a tile belongs to, from its key.
+ *
+ * Tiles cut a road at grid lines, which are not features of the road and mean
+ * nothing to a driver on it. Anything asking "am I still on the same road?" --
+ * congestion detection above all -- has to compare this rather than the tile.
+ *
+ * Returns null for a segment with no key, whose caller has no road identity to
+ * fall back on beyond the row itself.
+ */
+export function roadOfKey(spatialKey: string | null | undefined): string | null {
+  if (!spatialKey) return null;
+  const separator = spatialKey.lastIndexOf('|');
+  return separator === -1 ? spatialKey : spatialKey.slice(0, separator);
+}

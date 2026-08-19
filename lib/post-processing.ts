@@ -11,6 +11,7 @@
 
 import { prisma } from '@/lib/prisma';
 import { detectCongestion, CongestionEvent as DetectedEvent } from './congestion-detection';
+import { roadOfKey } from './segment-identity';
 import { CongestionSeverity } from '@prisma/client';
 
 export interface CongestionAnalysisResult {
@@ -288,7 +289,7 @@ export async function runCongestionAnalysis(
       distanceFromPrev: true,
       segmentMatches: {
         take: 1,
-        select: { segmentId: true },
+        select: { segmentId: true, segment: { select: { spatialKey: true } } },
       },
     },
   });
@@ -297,9 +298,12 @@ export async function runCongestionAnalysis(
     return { matchCount: 0, eventCount: 0, totalDuration: 0 };
   }
 
+  // roadId, not segmentId, is what holds an event together: segments are tiles
+  // of a road cut at grid lines, and crossing one is not leaving the road.
   const gpsWithSegments = gpsSamples.map(({ segmentMatches, ...gps }) => ({
     ...gps,
     segmentId: segmentMatches[0]?.segmentId,
+    roadId: roadOfKey(segmentMatches[0]?.segment.spatialKey) ?? segmentMatches[0]?.segmentId,
   }));
   const matchCount = gpsWithSegments.filter((sample) => sample.segmentId).length;
 

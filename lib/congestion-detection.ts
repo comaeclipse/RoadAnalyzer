@@ -15,6 +15,17 @@ export interface GpsSampleWithSegment {
   speed: number | null;
   distanceFromPrev: number | null;
   segmentId?: string;  // Added by segment matching
+  /**
+   * The road the segment belongs to, which is what decides whether an event
+   * continues. Segments are tiles of a road cut at grid lines, and a grid line
+   * is not something the traffic knows about: ending an event there splits one
+   * jam into pieces that each have to clear minDuration separately, and the
+   * pieces that do not are simply lost.
+   *
+   * Defaults to the segment id when absent, which reproduces the older
+   * behaviour of treating every segment as its own road.
+   */
+  roadId?: string;
 }
 
 export interface CongestionEvent {
@@ -88,6 +99,31 @@ function getISOWeek(date: Date): number {
  * Finalize a congestion event from collected samples
  * Filters out brief stops (< minDuration) and calculates metrics
  */
+/**
+ * The segment an event is recorded against: the one it spent the most samples
+ * on, with the earliest winning a tie.
+ *
+ * An event may cross several tiles of a road. Filing it under the tile it
+ * started in would credit whichever tile the queue happened to reach back into;
+ * the tile it sat on longest is the one the congestion is actually about.
+ */
+function dominantSegment(samples: GpsSampleWithSegment[]): string | null {
+  const counts = new Map<string, number>();
+  for (const sample of samples) {
+    if (!sample.segmentId) continue;
+    counts.set(sample.segmentId, (counts.get(sample.segmentId) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [segmentId, count] of Array.from(counts.entries())) {
+    if (count > bestCount) {
+      best = segmentId;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 function finalizeEvent(
   segmentId: string,
   startSample: GpsSampleWithSegment,
@@ -167,32 +203,38 @@ export function detectCongestion(
 ): CongestionEvent[] {
   const events: CongestionEvent[] = [];
   const sorted = [...gpsSamples].sort((a, b) => Number(a.timestamp - b.timestamp));
+  const roadOf = (sample: GpsSampleWithSegment) => sample.roadId ?? sample.segmentId;
   let eventStart: GpsSampleWithSegment | null = null;
   let eventSamples: GpsSampleWithSegment[] = [];
-  let eventSegmentId: string | null = null;
+  let eventRoadId: string | null = null;
   let previous: GpsSampleWithSegment | null = null;
 
   const flush = () => {
-    if (eventStart && eventSegmentId && eventSamples.length > 0) {
-      const event = finalizeEvent(eventSegmentId, eventStart, eventSamples, thresholds);
-      if (event) events.push(event);
+    if (eventStart && eventSamples.length > 0) {
+      const segmentId = dominantSegment(eventSamples);
+      if (segmentId) {
+        const event = finalizeEvent(segmentId, eventStart, eventSamples, thresholds);
+        if (event) events.push(event);
+      }
     }
     eventStart = null;
     eventSamples = [];
-    eventSegmentId = null;
+    eventRoadId = null;
   };
 
   for (const sample of sorted) {
     const gap = previous ? Number(sample.timestamp - previous.timestamp) : 0;
+    // Leaving the road ends the event; moving to the next tile of the same road
+    // does not. A gap says nothing happened in between, so it ends it too.
     const boundary = !sample.segmentId ||
-      (eventSegmentId != null && sample.segmentId !== eventSegmentId) ||
+      (eventRoadId != null && roadOf(sample) !== eventRoadId) ||
       gap > 15_000;
     if (boundary) flush();
 
     if (sample.segmentId && (sample.speed ?? 0) < thresholds.freeFlowSpeed) {
       if (!eventStart) {
         eventStart = sample;
-        eventSegmentId = sample.segmentId;
+        eventRoadId = roadOf(sample) ?? null;
       }
       eventSamples.push(sample);
     } else {
