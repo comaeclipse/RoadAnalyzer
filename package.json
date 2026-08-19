@@ -10,7 +10,8 @@
     "test": "vitest run",
     "backfill-roughness": "tsx scripts/backfill-roughness.ts",
     "analyze-data": "tsx scripts/analyze-data.ts",
-    "rebuild-segment-stats": "tsx scripts/rebuild-segment-stats.ts"
+    "rebuild-segment-stats": "tsx scripts/rebuild-segment-stats.ts",
+    "import-osm-signals": "tsx scripts/import-osm-signals.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",

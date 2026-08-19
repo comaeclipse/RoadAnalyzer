@@ -375,6 +375,50 @@ model TrafficTag {
   @@index([kind])
 }
 
+/// A traffic control imported from OpenStreetMap.
+///
+/// Clusters in lib/intersection-stops.ts only exist once they have produced a
+/// stop, so a signal caught one time in ten is barely represented and one never
+/// caught at all is invisible. These rows are a denominator of controls that
+/// does not depend on having stopped, and a `kind` that does not depend on the
+/// driver having tagged it.
+///
+/// OSM node ids are genuinely stable, unlike the OpenLR references that made
+/// RoadSegment identity a problem, so they are the merge key.
+model OsmSignal {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  osmNodeId BigInt @unique
+  latitude  Float
+  longitude Float
+
+  /// The OSM highway tag: traffic_signals, or stop.
+  highway   String
+  /// OSM direction tag (forward, backward), when the mapper recorded which
+  /// approach the control governs. Usually absent.
+  direction String?
+  /// Everything else the node carried, kept so a question about it can be
+  /// answered without re-querying Overpass.
+  tags      Json
+
+  /// Whether this control sits on a road we have actually driven. Computed at
+  /// import, when the driven geometry is already in hand, so a page can count
+  /// the controls we pass without stopping at them without doing an O(controls
+  /// x roads) geometry sweep per request. Goes stale as new roads are driven,
+  /// and is refreshed by the next import along with everything else.
+  onDrivenRoad Boolean @default(false)
+
+  /// When Overpass last confirmed this node. Refreshed on a schedule, never
+  /// per request.
+  fetchedAt DateTime
+
+  @@index([latitude, longitude])
+  @@index([highway])
+  @@index([onDrivenRoad])
+}
+
 /// A span the driver removed from the drive (pulled over for an ambulance,
 /// stopped for fuel). Recorded so analysis reads the gap as deliberate rather
 /// than as one very long stop or a jump across the map.

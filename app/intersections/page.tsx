@@ -40,6 +40,13 @@ interface Approach {
   totalDelay: number;
   expectedDelay: number;
   stops: StopEvent[];
+  /**
+   * The control OpenStreetMap places ahead of this approach, when there is one.
+   * Kept separate from `kind`, which is the driver's own label: a human
+   * confirming what happened at the moment it happened is stronger evidence
+   * than a map, and merging the two would cost us the better one.
+   */
+  osm: { nodeId: number; kind: string | null; distance: number } | null;
 }
 
 interface Summary {
@@ -48,6 +55,12 @@ interface Summary {
   stopCount: number;
   totalDelay: number;
   clampedCount: number;
+  osmControls: {
+    onDrivenRoad: number;
+    associated: number;
+    neverStopped: number;
+    lastFetchedAt: string | null;
+  };
   thresholds: {
     stoppedSpeedMph: number;
     minStopSeconds: number;
@@ -303,6 +316,16 @@ export default function IntersectionsPage() {
               </div>
             )}
 
+            {summary.osmControls.neverStopped > 0 && (
+              <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+                <span className="font-medium">{summary.osmControls.neverStopped}</span> of the{' '}
+                {summary.osmControls.onDrivenRoad} traffic controls OpenStreetMap places on roads
+                you drive never appear above, because this table is built from places you stopped.
+                Those are the ones you get through — the signals costing you least are the ones
+                there is least to say about.
+              </div>
+            )}
+
             {summary.clampedCount > 0 && (
               <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
                 <span className="font-medium">{summary.clampedCount}</span> of these approaches
@@ -361,11 +384,27 @@ export default function IntersectionsPage() {
                             </div>
                             <div className="mt-0.5 flex items-center gap-2 pl-[18px] text-xs text-gray-500">
                               <span>{approach.direction}</span>
-                              {approach.kind !== 'UNCLASSIFIED' && (
-                                <Badge variant="outline" className="border-gray-200 text-gray-600">
+                              {approach.kind !== 'UNCLASSIFIED' ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-gray-200 text-gray-600"
+                                  title="You tagged this from the phone."
+                                >
                                   {kindLabel(approach.kind)}
                                 </Badge>
-                              )}
+                              ) : approach.osm?.kind ? (
+                                // Deliberately not the same badge. A dashed
+                                // outline and the source in the label so that
+                                // "you told me this is a stop sign" never reads
+                                // the same as "OSM says there is one here".
+                                <Badge
+                                  variant="outline"
+                                  className="border-dashed border-gray-300 font-normal text-gray-400"
+                                  title={`OpenStreetMap has a control ${Math.round(approach.osm.distance)} m ahead of this approach. You have not tagged it.`}
+                                >
+                                  {kindLabel(approach.osm.kind)} · OSM
+                                </Badge>
+                              ) : null}
                             </div>
                           </td>
                           <td className="whitespace-nowrap px-3 py-2.5 text-gray-600">

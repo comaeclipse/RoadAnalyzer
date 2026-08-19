@@ -5,6 +5,7 @@ import {
   DEFAULT_OPTIONS,
   type AnalysisDrive,
 } from '@/lib/intersection-stops';
+import { associateSignal, kindForHighwayTag, type OsmNode } from '@/lib/osm-signals';
 
 export const dynamic = 'force-dynamic';
 
@@ -81,9 +82,47 @@ export async function GET(request: NextRequest) {
         })),
       }));
 
-    const approaches = analyzeIntersections(analysisDrives).filter(
+    const measured = analyzeIntersections(analysisDrives).filter(
       (approach) => approach.passes >= minPasses
     );
+
+    // Read from our own cache, never from Overpass: a page that failed because
+    // a third-party API was rate limiting would be a bad trade for a label.
+    const signalRows = await prisma.osmSignal.findMany({
+      select: {
+        osmNodeId: true, latitude: true, longitude: true,
+        highway: true, direction: true, tags: true, onDrivenRoad: true,
+      },
+    });
+    const signals: OsmNode[] = signalRows.map((row) => ({
+      osmNodeId: Number(row.osmNodeId),
+      latitude: row.latitude,
+      longitude: row.longitude,
+      highway: row.highway,
+      direction: row.direction,
+      tags: row.tags as Record<string, string>,
+    }));
+
+    // Purely additive. The OSM control is reported alongside the driver's own
+    // label rather than folded into it: a driver confirming "that was a red
+    // light" as it happened is stronger evidence than a map, and blurring the
+    // two would cost us the more valuable of them. No probability or delay
+    // figure is touched here.
+    const associated = new Set<number>();
+    const approaches = measured.map((approach) => {
+      const found = associateSignal(approach, signals);
+      if (found) associated.add(found.signal.osmNodeId);
+      return {
+        ...approach,
+        osm: found ? {
+          nodeId: found.signal.osmNodeId,
+          kind: kindForHighwayTag(found.signal.highway),
+          distance: found.distance,
+        } : null,
+      };
+    });
+
+    const onDrivenRoad = signalRows.filter((row) => row.onDrivenRoad);
 
     return NextResponse.json({
       approaches,
@@ -96,6 +135,17 @@ export async function GET(request: NextRequest) {
         // Should be 0; a non-zero value means those rates are floors, not
         // measurements, and is worth investigating rather than rendering plain.
         clampedCount: approaches.filter((a) => a.passesClamped).length,
+        // Controls we drive past. The ones with no approach are the junctions
+        // we never stop at -- invisible to clustering seeded by stop events,
+        // which is the whole reason for importing them.
+        osmControls: {
+          onDrivenRoad: onDrivenRoad.length,
+          associated: associated.size,
+          neverStopped: onDrivenRoad.filter((row) => !associated.has(Number(row.osmNodeId))).length,
+          lastFetchedAt: signalRows.length
+            ? (await prisma.osmSignal.aggregate({ _max: { fetchedAt: true } }))._max.fetchedAt
+            : null,
+        },
         // Surfaced so the page can explain what "stopped" means here rather
         // than leaving the thresholds implicit.
         thresholds: {
