@@ -3,7 +3,6 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { SensorProvider } from "@/components/providers/SensorProvider";
-import { RecordingProvider } from "@/components/providers/RecordingProvider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -28,9 +27,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <SensorProvider>
-          <RecordingProvider>{children}</RecordingProvider>
-        </SensorProvider>
+        {/* Live browser sensors, for /calibration. Recording happens on the
+            phone; the browser recorder that used to wrap this is gone. */}
+        <SensorProvider>{children}</SensorProvider>
       </body>
     </html>
   );
