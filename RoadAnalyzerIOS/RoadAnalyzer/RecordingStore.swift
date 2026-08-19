@@ -17,6 +17,16 @@ struct StopPrompt: Identifiable, Equatable {
     var id: UUID { stopEventId }
 }
 
+/// "Are you still driving?" — shown when the car has not moved for long enough
+/// that the drive is probably over and the driver has forgotten to end it.
+struct StillDrivingPrompt: Equatable {
+    let shownAt: Date
+    /// When the app will end the drive by itself if nobody answers.
+    let deadline: Date
+    /// The moment the car last moved. The drive ends here, not at the deadline.
+    let lastMovedAt: Date
+}
+
 /// The slice of an in-flight drive the UI actually renders, published in place
 /// of the session itself. Publishing the session meant every appended sample
 /// invalidated every view that read it, and reading a count off a published
@@ -72,6 +82,22 @@ final class RecordingStore: NSObject, ObservableObject {
     static let promptTimeout: TimeInterval = 20
     /// A pause still open after this long was abandoned, not deliberate.
     static let abandonedPauseAge: TimeInterval = 6 * 3600
+    /// Stillness after which the app asks whether the drive is over.
+    ///
+    /// Five minutes is far longer than any traffic control and longer than all
+    /// but the worst jams: the longest stop in a year of recorded drives is
+    /// 149 s. Long enough not to interrupt a drawbridge or a freight crossing,
+    /// short enough that a drive forgotten in a car park does not run all day.
+    static let stillnessBeforeAsking: TimeInterval = 5 * 60
+    /// Unanswered for this long and the app ends the drive itself. The driver
+    /// has almost certainly walked away from the phone, which is the case this
+    /// exists for.
+    static let stillnessAnswerWindow: TimeInterval = 2 * 60
+    /// After "yes, still driving", do not ask again for this long. Sitting in a
+    /// queue for twenty minutes should cost one question, not four.
+    static let stillnessSnooze: TimeInterval = 20 * 60
+    /// Movement below this is GPS jitter at a standstill, not driving.
+    static let movementSpeed = 1.5
     /// A review left unfinished this long must not keep blocking uploads.
     static let staleReviewAge: TimeInterval = 24 * 3600
 
@@ -109,6 +135,14 @@ final class RecordingStore: NSObject, ObservableObject {
     private var pending: [RecordingSession] = []
     private var isUploading = false
     private var uploadPassRequested = false
+    /// Nil unless the app is asking whether the drive is over.
+    @Published private(set) var stillDrivingPrompt: StillDrivingPrompt?
+
+    /// When the car last actually moved, which is where an auto-ended drive
+    /// ends. Nil until the first moving fix of a drive.
+    private var lastMovementAt: Date?
+    private var stillnessSnoozedUntil: Date?
+
     private var tickTask: Task<Void, Never>?
     private var promptDismissTask: Task<Void, Never>?
 
@@ -201,6 +235,9 @@ final class RecordingStore: NSObject, ObservableObject {
         statusMessage = "Recording traffic drive"
         detector.resetForNewSession()
         resetRoute()
+        lastMovementAt = nil
+        stillnessSnoozedUntil = nil
+        clearStillDrivingPrompt()
         startSensors()
         publishLive()
         persist()
@@ -228,6 +265,11 @@ final class RecordingStore: NSObject, ObservableObject {
 
     func resume() {
         guard active?.isPaused == true else { return }
+        // The pause was not the car sitting still with the app watching -- GPS
+        // was off. Restart the stillness clock rather than counting the pause
+        // towards it and asking the moment the driver pulls away.
+        lastMovementAt = Date.now
+        clearStillDrivingPrompt()
         active?.closeOpenPause(at: .now, endedBy: .user)
         locationManager.stopMonitoringSignificantLocationChanges()
         startSensors()
@@ -240,16 +282,29 @@ final class RecordingStore: NSObject, ObservableObject {
         persist()
     }
 
-    func stop() {
+    func stop() { stop(endingAt: nil) }
+
+    /// End the drive.
+    ///
+    /// `endingAt` is for a drive the app ends itself, and is the moment the car
+    /// last moved rather than the moment the app noticed. A drive the driver
+    /// forgot about would otherwise carry however long it sat parked -- hours of
+    /// stationary fixes, which is a wrong duration, a stop at the destination
+    /// long enough to distort every delay figure it touches, and a congestion
+    /// event lasting as long as the car was left there. Samples after that point
+    /// belong to the parking, not the drive, so they go with it.
+    func stop(endingAt: Date?) {
         guard active != nil else { return }
         stopSensors()
         locationManager.stopMonitoringSignificantLocationChanges()
         clearPrompt(markingDismissed: false)
+        clearStillDrivingPrompt()
         // Read after stopSensors(), which drains the last of the buffered motion
         // into the session.
         guard var completed = active else { return }
 
-        let now = Date.now
+        let now = endingAt ?? Date.now
+        if let endingAt { completed.truncate(after: endingAt) }
         if completed.isPaused { completed.closeOpenPause(at: now, endedBy: .stoppedWhilePaused) }
         // The last stop of a drive is nearly always "arrived at destination".
         // Surfacing it for review every single time is pure noise.
@@ -267,6 +322,8 @@ final class RecordingStore: NSObject, ObservableObject {
         active = nil
         detector.resetForNewSession()
         resetRoute()
+        lastMovementAt = nil
+        stillnessSnoozedUntil = nil
         publishLive()
 
         // Uploading before the driver has tagged anything would strand every
@@ -362,6 +419,7 @@ final class RecordingStore: NSObject, ObservableObject {
                 guard !Task.isCancelled, let self else { return }
                 self.drainMotion()
                 self.handle(self.detector.tick(now: .now))
+                self.checkStillness(now: .now)
             }
         }
     }
@@ -410,6 +468,7 @@ final class RecordingStore: NSObject, ObservableObject {
 
         for sample in samples {
             extendRoute(with: sample)
+            noteMovement(in: sample)
             handle(detector.ingest(sample))
         }
         publishRoute()
@@ -522,6 +581,10 @@ final class RecordingStore: NSObject, ObservableObject {
         while drawnCoordinates > Self.maxDrawnCoordinates { thinDrawnRoute() }
         lastDrawnCoordinate = spanBuffer.last?.last
         lastRouteSample = session.locations.max { $0.timestamp < $1.timestamp }
+        // Recover when the car last moved, so a drive restored after a crash is
+        // still asked about rather than waiting for a movement that will never
+        // come if it is already parked.
+        lastMovementAt = session.locations.last { ($0.speed ?? 0) > Self.movementSpeed }?.timestamp
         // A restored drive resumes into a fresh span: whatever happened while
         // the app was gone is not a straight line worth drawing.
         routeBreakPending = true
@@ -567,6 +630,70 @@ final class RecordingStore: NSObject, ObservableObject {
             }
             persist()
         }
+    }
+
+    /// Remember the car moving, and take back the question if it was being asked.
+    private func noteMovement(in sample: LocationSample) {
+        guard (sample.speed ?? 0) > Self.movementSpeed else { return }
+        lastMovementAt = sample.timestamp
+        // Driving again answers the question better than tapping does.
+        if stillDrivingPrompt != nil {
+            clearStillDrivingPrompt()
+            statusMessage = "Still recording"
+        }
+    }
+
+    /// Ask whether the drive is over, and end it if nobody says otherwise.
+    ///
+    /// Runs on the same tick as the detector. A paused drive is excluded: GPS is
+    /// off, so stillness means nothing, and an abandoned pause is already
+    /// recovered separately.
+    private func checkStillness(now: Date) {
+        guard active != nil, !isPaused else { return }
+
+        if let prompt = stillDrivingPrompt {
+            guard now >= prompt.deadline else { return }
+            // Nobody answered. The driver is not with the phone, which is the
+            // whole case this exists for, so end the drive where the driving
+            // ended rather than here.
+            clearStillDrivingPrompt()
+            stop(endingAt: prompt.lastMovedAt)
+            statusMessage = "Drive ended automatically — the car had not moved for a while"
+            return
+        }
+
+        guard let lastMoved = lastMovementAt ?? active?.startedAt,
+              now.timeIntervalSince(lastMoved) >= Self.stillnessBeforeAsking,
+              stillnessSnoozedUntil.map({ now >= $0 }) ?? true else { return }
+
+        stillDrivingPrompt = StillDrivingPrompt(
+            shownAt: now,
+            deadline: now.addingTimeInterval(Self.stillnessAnswerWindow),
+            lastMovedAt: lastMoved
+        )
+        Haptics.stopDetected()
+    }
+
+    /// "Yes, still driving." Keeps the drive and stops asking for a while.
+    func confirmStillDriving() {
+        clearStillDrivingPrompt()
+        stillnessSnoozedUntil = Date.now.addingTimeInterval(Self.stillnessSnooze)
+        // Treat the answer as movement: otherwise the snooze expires and the
+        // question returns immediately on a car that still has not moved.
+        lastMovementAt = Date.now
+        statusMessage = "Still recording"
+    }
+
+    /// "No, I'm done." Ends the drive at the last movement, same as the timeout,
+    /// because the driving stopped then and not when the question was answered.
+    func endDriveFromPrompt() {
+        guard let prompt = stillDrivingPrompt else { return }
+        clearStillDrivingPrompt()
+        stop(endingAt: prompt.lastMovedAt)
+    }
+
+    private func clearStillDrivingPrompt() {
+        stillDrivingPrompt = nil
     }
 
     private func presentPrompt(for event: StopEvent) {

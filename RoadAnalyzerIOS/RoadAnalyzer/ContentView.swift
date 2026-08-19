@@ -32,18 +32,9 @@ struct ContentView: View {
             .toolbar { ToolbarItem(placement: .topBarTrailing) { queueIndicator } }
             // An overlay, not a sheet: presentation is instant, the map stays
             // visible, and there is no swipe-to-dismiss to fumble at a light.
-            .overlay(alignment: .bottom) {
-                if let prompt = store.activePrompt {
-                    StopPromptOverlay(
-                        prompt: prompt,
-                        onTag: { store.tagActivePrompt($0) },
-                        onDismiss: { store.dismissActivePrompt() }
-                    )
-                    .padding(.bottom, 8)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
+            .overlay(alignment: .bottom) { prompts }
             .animation(.snappy, value: store.activePrompt?.stopEventId)
+            .animation(.snappy, value: store.stillDrivingPrompt?.shownAt)
         }
         .onChange(of: scenePhase) { _, phase in
             // A prompt whose deadline passed while the app was backgrounded is
@@ -100,6 +91,33 @@ struct ContentView: View {
             return "\(review.untaggedStops.count) stops waiting to be tagged"
         }
         return "\(store.pendingUploads) uploads queued\(store.rejectedUploads > 0 ? ", \(store.rejectedUploads) rejected" : "")"
+    }
+
+    /// "Still driving?" outranks a stop prompt: the drive ending is the more
+    /// consequential question, and the two cannot both be true -- a car that has
+    /// not moved in five minutes is not at a light that just turned red.
+    @ViewBuilder
+    private var prompts: some View {
+        if let stillDriving = store.stillDrivingPrompt {
+            TimelineView(.periodic(from: stillDriving.shownAt, by: 1)) { context in
+                StillDrivingOverlay(
+                    prompt: stillDriving,
+                    now: context.date,
+                    onKeepDriving: { store.confirmStillDriving() },
+                    onEndDrive: { store.endDriveFromPrompt() }
+                )
+            }
+            .padding(.bottom, 8)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if let prompt = store.activePrompt {
+            StopPromptOverlay(
+                prompt: prompt,
+                onTag: { store.tagActivePrompt($0) },
+                onDismiss: { store.dismissActivePrompt() }
+            )
+            .padding(.bottom, 8)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
     }
 
     private var statusCard: some View {

@@ -27,7 +27,19 @@ struct StopDetector {
     /// light routinely fakes 2-4 m/s.
     static let departureDistance = 30.0
     /// Quiet window after a departure, so stop-and-go does not chatter.
+    ///
+    /// Only suppresses a re-stop within `cooldownRadius` of where the driver
+    /// just drove off. Time alone was wrong: the window is long enough to cover
+    /// the next junction down the road at any city speed, and it was silently
+    /// dropping those stops -- not just the prompt, the whole event, so they
+    /// were never reviewed and never uploaded. Four genuine stops across three
+    /// drives were lost that way, every one of them 235-293 m from the previous
+    /// stop and inside 45 s of it.
     static let rearmCooldown: TimeInterval = 45
+    /// How close a re-stop must be to the departure point to count as chatter
+    /// rather than a new place. A queue creep re-stops within a few metres; a
+    /// junction down the road does not.
+    static let cooldownRadius = 50.0
     /// A cluster of this many stops inside `clusterWindow` and `clusterRadius`
     /// is congestion, not a series of intersections.
     static let clusterCount = 3
@@ -62,6 +74,9 @@ struct StopDetector {
     private var lastProcessedAt: Date?
     private var lastGoodCourse: (heading: Double, at: Date)?
     private var cooldownUntil: Date?
+    /// Where the driver departed from, so the cooldown can tell a queue creep
+    /// from the next junction along.
+    private var cooldownAnchor: LocationSample?
     /// Recent confirmed stops, for cluster suppression. Trimmed to the window.
     private var recentStops: [(at: Date, latitude: Double, longitude: Double)] = []
     /// Trailing positions, used to recover an approach bearing when CoreLocation
@@ -84,6 +99,7 @@ struct StopDetector {
     mutating func resetForNewSession() {
         reset()
         cooldownUntil = nil
+        cooldownAnchor = nil
         recentStops = []
     }
 
@@ -172,6 +188,7 @@ struct StopDetector {
             }
             state = .moving
             cooldownUntil = now.addingTimeInterval(Self.rearmCooldown)
+            cooldownAnchor = at
             return .departed(stopId: id, endedAt: now, minimumSpeed: min(minimumSpeed, speed))
         }
     }
@@ -188,7 +205,10 @@ struct StopDetector {
         state = .stopped(id: id, at: anchor, minimumSpeed: minimumSpeed)
 
         trimRecentStops(before: now)
-        let inCooldown = cooldownUntil.map { now < $0 } ?? false
+        // Both halves, deliberately: recently *and* essentially where the
+        // driver just was. Creeping forward in a queue satisfies both; the next
+        // light down the road satisfies only the first, and is a real stop.
+        let inCooldown = (cooldownUntil.map { now < $0 } ?? false) && nearDeparture(anchor)
         let suppressed = inCooldown || isInCluster(anchor, now: now)
         recentStops.append((at: now, latitude: anchor.latitude, longitude: anchor.longitude))
 
@@ -275,6 +295,15 @@ struct StopDetector {
 
     private mutating func trimRecentStops(before now: Date) {
         recentStops.removeAll { now.timeIntervalSince($0.at) > Self.clusterWindow }
+    }
+
+    /// Whether a re-stop is close enough to the departure point to be the same
+    /// place rather than a new one.
+    private func nearDeparture(_ anchor: LocationSample) -> Bool {
+        guard let departure = cooldownAnchor else { return false }
+        return TrafficAnalyzer.distance(
+            departure.latitude, departure.longitude, anchor.latitude, anchor.longitude
+        ) <= Self.cooldownRadius
     }
 
     /// Three stops inside three minutes and 200 m is a jam, not three junctions.

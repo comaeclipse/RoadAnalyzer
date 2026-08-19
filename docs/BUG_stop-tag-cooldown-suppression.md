@@ -2,7 +2,7 @@
 
 **Area:** iOS — `RoadAnalyzerIOS/RoadAnalyzer/StopDetector.swift`
 **Severity:** High — genuine stops are lost with no prompt and no review, so they never reach the server. Data loss, not just a UI miss.
-**Status:** Open
+**Status:** Fixed — distance-aware cooldown, as recommended below. Regression covered by `RoadAnalyzerIOS/Tests`, which fails on the old time-only rule.
 **Filed:** 2026-08-17
 **Reported by:** driver observation ("stop, drive ≤30mph, stop again → no tag prompt"), confirmed against 8/16–8/17 drive data.
 

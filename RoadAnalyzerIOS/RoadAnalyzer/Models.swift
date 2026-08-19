@@ -1,6 +1,12 @@
 import Foundation
 import CoreLocation
+// Guarded so the model layer and the detector above it compile for macOS, which
+// is what lets RoadAnalyzerIOS/Tests run the real sources against synthetic
+// traces without a simulator. UIKit is used for one thing here: the device name
+// in an upload's diagnostics.
+#if canImport(UIKit)
 import UIKit
+#endif
 
 enum TrafficSeverity: String, Codable, CaseIterable {
     case freeFlow = "FREE_FLOW", slow = "SLOW", congested = "CONGESTED", heavy = "HEAVY", gridlock = "GRIDLOCK"
@@ -245,6 +251,23 @@ extension RecordingSession {
     var openStop: StopEvent? { stops.last.flatMap { $0.endedAt == nil ? $0 : nil } }
     var isPaused: Bool { openPause != nil }
 
+    /// Drop everything recorded after `date`.
+    ///
+    /// For a drive the app ends itself: the tail is the car sitting parked while
+    /// nobody remembered to press Stop, and it is not part of the journey. A
+    /// stop that began before the cut is kept but closed at it, since the driver
+    /// really was stopped there -- it is the parking that follows that does not
+    /// belong.
+    mutating func truncate(after date: Date) {
+        locations.removeAll { $0.timestamp > date }
+        motionSamples.removeAll { $0.timestamp > date }
+        var kept = stops.filter { $0.startedAt <= date }
+        for index in kept.indices where kept[index].endedAt.map({ $0 > date }) ?? false {
+            kept[index].endedAt = date
+        }
+        stopEvents = kept
+    }
+
     /// Stops the driver still has to answer for. Suppressed cluster stops are
     /// excluded: they were never prompted, and surfacing forty of them after a
     /// jam is how this feature gets switched off.
@@ -364,9 +387,11 @@ struct MobileReport: Encodable {
         let model: String
         let osVersion: String
 
+        #if canImport(UIKit)
         @MainActor static var current: Device {
             Device(model: UIDevice.current.model, osVersion: UIDevice.current.systemVersion)
         }
+        #endif
     }
     struct Diagnostics: Encodable { let batteryLevel: Float?; let networkType: String; let locationAuthorization: String }
 
