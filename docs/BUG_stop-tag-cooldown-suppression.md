@@ -2,7 +2,7 @@
 
 **Area:** iOS — `RoadAnalyzerIOS/RoadAnalyzer/StopDetector.swift`
 **Severity:** High — genuine stops are lost with no prompt and no review, so they never reach the server. Data loss, not just a UI miss.
-**Status:** Fixed — distance-aware cooldown, as recommended below. Regression covered by `RoadAnalyzerIOS/Tests`, which fails on the old time-only rule.
+**Status:** Fixed 2026-08-19 in 76e4f65 — see Resolution.
 **Filed:** 2026-08-17
 **Reported by:** driver observation ("stop, drive ≤30mph, stop again → no tag prompt"), confirmed against 8/16–8/17 drive data.
 
@@ -113,3 +113,91 @@ Add to the detector's synthetic-trace suite:
 
 - iOS detection only. **Not retroactive** — the 4 stops already dropped were never uploaded and cannot be recovered; the fix only affects future drives.
 - Web/server post-hoc analysis (`lib/intersection-stops.ts`) is unaffected — it reconstructs stops from GPS independently and already sees these stops.
+
+---
+
+## Resolution (2026-08-19, 76e4f65)
+
+Took the recommended fix: the cooldown is distance-aware rather than time-only.
+
+```swift
+// StopDetector.swift
+static let cooldownRadius = 50.0
+private var cooldownAnchor: LocationSample?
+
+// on departure
+cooldownAnchor = at            // the stop just left, not the fix that left it
+
+// in confirm()
+let inCooldown = (cooldownUntil.map { now < $0 } ?? false) && nearDeparture(anchor)
+let suppressed = inCooldown || isInCluster(anchor, now: now)
+```
+
+Both halves are required now: recently, **and** essentially where the driver
+already was. Creeping forward in a queue satisfies both; the next junction along
+satisfies only the first, and is a real stop.
+
+`cooldownAnchor` is the stop's own anchor rather than the departing fix. Leaving
+requires more than 30 m of travel, so anchoring on the departing fix would put
+the radius 30 m further down the road for no reason and shift what counts as
+"the same place" by the length of the departure gate.
+
+Cluster suppression is unchanged, and still the thing that handles real jams.
+
+### Tests
+
+`RoadAnalyzerIOS/Tests` is new, and exists because of this bug: the fix is a
+behavioural change to a state machine, and asserting it by reading the diff is
+not the same as running it. `StopDetector` and `TrafficAnalyzer` are pure value
+types over `LocationSample`, so the harness compiles **the real sources** for
+macOS and drives synthetic traces through them — no simulator, no car, no red
+light, and nothing copied that can drift out of step with what ships. The single
+concession is `#if canImport(UIKit)` around the one UIKit use in `Models.swift`.
+
+```
+./RoadAnalyzerIOS/Tests/run.sh
+```
+
+Covers the three cases the test plan above asked for, plus the two baselines
+(one light is one stop; a roll-through is not a stop). 10/10.
+
+**The regression test has teeth.** Reverting just the `&& nearDeparture(anchor)`
+clause and re-running gives:
+
+```
+ok   two junctions 250 m apart both confirm (got 2)
+FAIL neither is suppressed (suppressed: [false, true])
+```
+
+`[false, true]` is precisely the reported failure: the first light prompts, the
+second is silently dropped.
+
+Two of the fixtures in the original test plan needed correcting while writing
+them, and the corrections are worth recording because they say something about
+the code:
+
+- The "brief creep" case as specified — *re-stop within a few metres* — cannot
+  happen. Leaving a stop requires **both** >30 m travelled and >6 m/s, so a car
+  that has only crept a few metres never departed and is still the same stop. The
+  fixture that actually exercises the cooldown is a departure of just over 30 m
+  followed by a re-stop inside the 50 m radius.
+- The cluster fixture needs **four** stops, not three: `isInCluster` counts
+  *previous* stops within 200 m of the new one, so a third stop only has two
+  neighbours to find.
+
+### Verifying on real data
+
+`npx tsx scripts/investigate-untagged-stops.ts` still reproduces, but note its
+window is **start of yesterday to now** — the 8/16–8/17 evidence drives are
+outside it. Reading immediately after the fix, across the 4 drives in window:
+**0 untagged stops**. That is a clean starting point rather than proof; those
+drives may simply not have had two controls inside 45 s of each other.
+
+The confirmation is a future drive that does. A drive showing `UNTAGGED STOPS`
+above zero, where the gap to the previous stop is under 45 s, would mean this is
+still wrong.
+
+### Not recovered
+
+The 4 stops already dropped were never uploaded and cannot be recovered. Nothing
+retroactive was attempted.

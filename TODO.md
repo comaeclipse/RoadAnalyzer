@@ -80,6 +80,12 @@ deciding what to do when displacement is smaller than measurement noise.
 **No schedule for the OSM import.** `npm run import-osm-signals -- --apply` is
 run by hand. Monthly is plenty; signals do not move. See `docs/OSM_SIGNALS.md`.
 
+**Closely-spaced stops are no longer dropped**, as of 76e4f65 — the 45 s rearm
+cooldown is distance-aware now. Confirmed by synthetic traces; the reading on
+real data is clean but not yet decisive, since it needs a drive with two
+controls inside 45 s of each other. See
+`docs/BUG_stop-tag-cooldown-suppression.md`.
+
 **Congestion events are tile-scoped, one drive at a time.** Fine, but it means a
 jam spanning two tiles is two events. Re-detection is idempotent
 (`scripts/redetect-congestion.ts`) if the boundary rule ever changes again.
@@ -130,6 +136,9 @@ Nothing here is committed to, and none of it is blocking.
   derived from the reference drive on every analysis today.
 - Direction-aware segments, if northbound and southbound congestion ever need
   telling apart. That is a data model change, not a dedupe.
+- A local notification when a drive ends itself. Today the app asks in-app and
+  ends the drive silently if it is backgrounded, which is the right outcome but
+  the driver only finds out on reopening.
 
 ### Explicitly rejected
 
