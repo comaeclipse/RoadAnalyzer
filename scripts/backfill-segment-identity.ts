@@ -48,6 +48,7 @@ interface SegmentRow {
   name: string;
   geometry: GeoJSON.LineString;
   sourceId: string | null;
+  spatialKey: string | null;
 }
 
 function lengthMeters(geometry: GeoJSON.LineString): number {
@@ -58,17 +59,24 @@ function lengthMeters(geometry: GeoJSON.LineString): number {
 async function main() {
   const segments = (await prisma.roadSegment.findMany({
     where: { source: 'MAPBOX' },
-    select: { id: true, name: true, geometry: true, sourceId: true },
+    select: { id: true, name: true, geometry: true, sourceId: true, spatialKey: true },
     orderBy: { createdAt: 'asc' },
   })) as unknown as SegmentRow[];
 
   const nameById = new Map(segments.map((segment) => [segment.id, segment.name]));
 
-  // Every tile the stored geometry covers, keeping the longest description of
+  // Rows already carrying a key are tiles from an earlier run. They are the
+  // destination, not the input: re-tiling one would produce itself, and then
+  // classifying it as a source row would delete the very row everything was
+  // just repointed at. This is what makes a second run a no-op.
+  const existingTiles = segments.filter((segment) => segment.spatialKey !== null);
+  const legacy = segments.filter((segment) => segment.spatialKey === null);
+
+  // Every tile the legacy geometry covers, keeping the longest description of
   // each — the same rule the write path uses.
   const tiles = new Map<string, SegmentTile & { name: string }>();
   const untiled: SegmentRow[] = [];
-  for (const segment of segments) {
+  for (const segment of legacy) {
     const produced = tileEdge(segment);
     if (produced.length === 0) {
       untiled.push(segment);
@@ -86,15 +94,20 @@ async function main() {
   // metres long. Where the same road has real tiles, the stub's samples belong
   // on them and the row goes; where it does not, there is nowhere to move them
   // and the row stays exactly as it is.
-  const tiledRoads = new Set(Array.from(tiles.values(), (tile) => tile.name));
+  // A stub may also belong on a tile an earlier run already created.
+  const tiledRoads = new Set([
+    ...Array.from(tiles.values(), (tile) => tile.name),
+    ...existingTiles.map((segment) => segment.name),
+  ]);
   const stranded = untiled.filter((segment) => !tiledRoads.has(segment.name));
   const strandedIds = new Set(stranded.map((segment) => segment.id));
 
   console.log(`MAPBOX road segments: ${segments.length}`);
-  console.log(`  tiles they cover: ${tiles.size}`);
+  console.log(`  already tiled by an earlier run: ${existingTiles.length}`);
+  console.log(`  tiles the remaining rows cover: ${tiles.size}`);
   console.log(`  rows with no road to move to, left alone: ${stranded.length}`);
   console.log(`  stubs folded into a tile of the same road: ${untiled.length - stranded.length}`);
-  console.log(`  rows to delete once repointed: ${segments.length - stranded.length}`);
+  console.log(`  rows to delete once repointed: ${legacy.length - stranded.length}`);
 
   const lengths = Array.from(tiles.values(), (tile) => lengthMeters(tile.geometry)).sort((a, b) => a - b);
   if (lengths.length) {
@@ -102,15 +115,21 @@ async function main() {
     console.log(`  tile length m: min ${Math.round(lengths[0])} median ${at(0.5)} max ${Math.round(lengths[lengths.length - 1])}`);
   }
 
-  const byName = new Map<string, number>();
-  for (const tile of tiles.values()) byName.set(tile.name, (byName.get(tile.name) ?? 0) + 1);
-  console.log('  roads with most tiles: ' + Array.from(byName.entries())
-    .sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => `${name} (${count})`).join(', '));
+  if (tiles.size) {
+    const byName = new Map<string, number>();
+    for (const tile of tiles.values()) byName.set(tile.name, (byName.get(tile.name) ?? 0) + 1);
+    console.log('  roads with most tiles: ' + Array.from(byName.entries())
+      .sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => `${name} (${count})`).join(', '));
+  }
 
-  const doomedIds = segments
+  const doomedIds = legacy
     .filter((segment) => !strandedIds.has(segment.id))
     .map((segment) => segment.id);
   const doomed = new Set(doomedIds);
+
+  if (doomedIds.length === 0) {
+    console.log('\nEvery row is already a tile or has nowhere to go — nothing to do.');
+  }
 
   // Where each match ends up: the tile covering the position it was matched at.
   const matches = await prisma.gpsSegmentMatch.findMany({
@@ -125,6 +144,18 @@ async function main() {
       gps: { select: { latitude: true, longitude: true } },
     },
   });
+
+  // Tiles an earlier run created are destinations too, so a stub left behind
+  // then can be folded in now.
+  for (const segment of existingTiles) {
+    if (segment.spatialKey && !tiles.has(segment.spatialKey)) {
+      tiles.set(segment.spatialKey, {
+        key: segment.spatialKey,
+        geometry: segment.geometry,
+        name: segment.name,
+      });
+    }
+  }
 
   const targetKeyByMatch = new Map<string, string>();
   let unplaceable = 0;
@@ -177,13 +208,9 @@ async function main() {
     return;
   }
 
-  // 1. The tile rows. Reuse any that already exist, so a second run is a no-op.
+  // 1. The tile rows. Reuse any an earlier run already made.
   const idByKey = new Map<string, string>();
-  const alreadyThere = await prisma.roadSegment.findMany({
-    where: { source: 'MAPBOX', spatialKey: { in: Array.from(tiles.keys()) } },
-    select: { id: true, spatialKey: true },
-  });
-  for (const row of alreadyThere) if (row.spatialKey) idByKey.set(row.spatialKey, row.id);
+  for (const row of existingTiles) if (row.spatialKey) idByKey.set(row.spatialKey, row.id);
 
   for (const [key, tile] of tiles) {
     if (idByKey.has(key)) continue;
@@ -227,20 +254,43 @@ async function main() {
     if (target) eventTarget.set(event.id, target);
   }
 
+  // Grouped by destination: one statement per target segment rather than one
+  // per row. 23k individual updates over the network would not finish inside
+  // any sane transaction timeout.
+  const dropSet = new Set(dropIds);
+  const matchIdsBySegment = new Map<string, string[]>();
+  for (const match of matches) {
+    if (dropSet.has(match.id)) continue;
+    const key = targetKeyByMatch.get(match.id);
+    const segmentId = key ? idByKey.get(key) : undefined;
+    if (!segmentId) continue;
+    const bucket = matchIdsBySegment.get(segmentId);
+    if (bucket) bucket.push(match.id);
+    else matchIdsBySegment.set(segmentId, [match.id]);
+  }
+  const eventIdsBySegment = new Map<string, string[]>();
+  for (const [id, segmentId] of eventTarget) {
+    const bucket = eventIdsBySegment.get(segmentId);
+    if (bucket) bucket.push(id);
+    else eventIdsBySegment.set(segmentId, [id]);
+  }
+
   await prisma.$transaction(async (tx) => {
     if (dropIds.length) await tx.gpsSegmentMatch.deleteMany({ where: { id: { in: dropIds } } });
-    for (const [id, segmentId] of eventTarget) {
-      await tx.congestionEvent.update({ where: { id }, data: { segmentId } });
+    for (const [segmentId, ids] of eventIdsBySegment) {
+      await tx.congestionEvent.updateMany({ where: { id: { in: ids } }, data: { segmentId } });
     }
-    for (const match of matches) {
-      if (dropIds.includes(match.id)) continue;
-      const key = targetKeyByMatch.get(match.id);
-      const segmentId = key ? idByKey.get(key) : undefined;
-      if (!segmentId) continue;
-      await tx.gpsSegmentMatch.update({ where: { id: match.id }, data: { segmentId } });
+    for (const [segmentId, ids] of matchIdsBySegment) {
+      // Chunked so a single statement never carries an unbounded id list.
+      for (let start = 0; start < ids.length; start += 1_000) {
+        await tx.gpsSegmentMatch.updateMany({
+          where: { id: { in: ids.slice(start, start + 1_000) } },
+          data: { segmentId },
+        });
+      }
     }
     await tx.roadSegment.deleteMany({ where: { id: { in: Array.from(doomed) } } });
-  }, { timeout: 300_000 });
+  }, { timeout: 300_000, maxWait: 30_000 });
 
   const eventsAfter = await prisma.congestionEvent.count();
   const durationAfter = (await prisma.congestionEvent.aggregate({ _sum: { duration: true } }))._sum.duration;

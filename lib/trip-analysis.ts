@@ -189,12 +189,21 @@ async function upsertEdges(edges: MatchedEdge[]): Promise<EdgeSegments> {
         ...bounds,
         isActive: true,
       };
-      const segment = await prisma.roadSegment.upsert({
-        where: { source_sourceId: { source: 'MAPBOX', sourceId: edge.sourceId } },
-        create: { ...data, source: 'MAPBOX', sourceId: edge.sourceId },
-        update: data,
+      // sourceId is provenance now, not identity, so there is no unique index
+      // to upsert against. An unnamed edge therefore keeps the old behaviour
+      // exactly: one row per OpenLR reference, over-creating rather than
+      // merging stubs it cannot tell apart.
+      const existing = await prisma.roadSegment.findFirst({
+        where: { source: 'MAPBOX', sourceId: edge.sourceId, spatialKey: null },
+        orderBy: { createdAt: 'asc' },
         select: { id: true },
       });
+      const segment = existing
+        ? await prisma.roadSegment.update({ where: { id: existing.id }, data, select: { id: true } })
+        : await prisma.roadSegment.create({
+            data: { ...data, source: 'MAPBOX', sourceId: edge.sourceId },
+            select: { id: true },
+          });
       bySourceId.set(edge.sourceId, segment.id);
       continue;
     }

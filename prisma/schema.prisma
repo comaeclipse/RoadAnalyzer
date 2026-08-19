@@ -179,8 +179,8 @@ model RoadSegment {
   segmentStats      SegmentStatistics[]
   gpsSegmentMatches GpsSegmentMatch[]
 
-  @@unique([source, sourceId])
-  @@index([source, spatialKey])
+  @@unique([source, spatialKey])
+  @@index([source, sourceId])
   @@index([minLat, maxLat, minLon, maxLon])
   @@index([name])
 }

@@ -1,8 +1,8 @@
 # Scope: write-time stable segment identity
 
-**Status:** superseded in part — see §10. The endpoint key in §4 was built, dry-run,
-and found not to work; identity is tiles instead. Phases 1–3 of the tiling are
-implemented; the backfill has not been applied.
+**Status:** done, as tiles rather than as §4's endpoint key — see §10. Backfill
+applied 2026-08-19: 144 rows became 322 tiles plus 13 stubs, congestion events and
+total duration conserved, and `@@unique([source, spatialKey])` now enforces it.
 **Goal:** stop the ingest pipeline from creating duplicate `RoadSegment` rows for
 the same physical stretch of road, so the read-layer dedupe
 ([lib/segment-dedupe.ts](../lib/segment-dedupe.ts)) becomes a safety net instead of
@@ -192,3 +192,22 @@ extent. What it changes:
 
 §6's ordering still holds and is what the backfill implements; only the
 clustering step changed, from "group duplicates" to "re-tile".
+
+### Applied
+
+    MAPBOX road segments: 144
+      tiles they cover: 322
+      rows with no road to move to, left alone: 13
+      tile length m: min 9 median 450 max 1034
+      GpsSegmentMatch rows re-filed: 23651, 0 collisions, 0 unplaceable
+      congestion events: 138 -> 138  (conserved)
+      congestion duration: 11243948 -> 11243948  (conserved)
+
+`SegmentStatistics` rebuilt to 537 rows. The unique constraint applied cleanly,
+which is the proof that no duplicate tile survived — it is added last precisely
+so that it fails if the backfill was incomplete.
+
+A second run reports nothing to do. Getting there needed one fix worth recording:
+the first draft treated every row as input, so a second pass would have re-tiled
+the tile rows and then deleted them as sources — after repointing everything onto
+them. Rows already carrying a key are now destinations, never inputs.
