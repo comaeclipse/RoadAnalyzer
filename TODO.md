@@ -37,6 +37,9 @@ recomputed from it, which is what makes the backfill scripts safe.
 | `/matching` | Map-matching diagnostics |
 | `/calibration` | Sensor baseline |
 
+The browser recorder that predated the phone was removed in f6d0d04. Drives
+recorded through it are still in the database and still render.
+
 ### The iOS recorder
 
 `RoadAnalyzerIOS/` — SwiftUI, records GPS at 1 Hz and motion at 10 Hz, detects
@@ -86,10 +89,6 @@ stops are caused by a queue discharging on green rather than by the signal, whic
 is 3.1% of measured delay. Stop probability carries nearly all of that error.
 Separating the two would need signal timing we do not have and will not infer —
 the driver's labels are better evidence than anything inferable from one car.
-
-**The web recorder still exists** (`RecordingProvider`, `/api/recordings/start`,
-`stop`, `sensor-data`). The iPhone is the real recorder now. Worth deciding
-whether the browser path earns its keep or should go.
 
 ## Watch this
 
