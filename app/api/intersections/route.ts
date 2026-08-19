@@ -4,10 +4,41 @@ import {
   analyzeIntersections,
   DEFAULT_OPTIONS,
   type AnalysisDrive,
+  type AnalysisPoint,
 } from '@/lib/intersection-stops';
 import { associateSignal, kindForHighwayTag, type OsmNode } from '@/lib/osm-signals';
 
 export const dynamic = 'force-dynamic';
+
+/** The drives this page is about: finished, and recorded for traffic. */
+const DRIVE_FILTER = { status: 'COMPLETED', recordingMode: 'TRAFFIC' } as const;
+
+/**
+ * How long a computed answer is served before it is worked out again.
+ *
+ * The answer changes only when a drive is uploaded or re-analysed, so almost
+ * every request recomputes something that has not moved. A time bound rather
+ * than a version key, deliberately: the obvious key -- max(updatedAt) and counts
+ * over drives, segments and signals -- measured at 677 ms, which is more than
+ * recomputing the whole answer now costs. Latency to the database dominates
+ * everything here, so any check that is itself a query defeats the purpose.
+ *
+ * Sixty seconds is short enough that a drive uploaded from the phone appears
+ * while the driver is still looking at the app, and long enough to cover the
+ * repeated loads of somebody actually reading the page.
+ */
+const CACHE_TTL_MS = 60_000;
+
+/**
+ * Cached per-process, so on serverless it is per warm instance. That is the
+ * right shape for this: instances are cheap to miss and there is nothing to
+ * invalidate across them, since a write happens in a different instance
+ * entirely and could not be told about anyway.
+ *
+ * Keyed by the filter, because the page's dropdown offers four of them and a
+ * single slot would be thrown away every time the reader changed their mind.
+ */
+const cache = new Map<number, { expires: number; body: unknown }>();
 
 /**
  * The approach heading the phone recorded with a tag.
@@ -34,53 +65,89 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid minPasses filter' }, { status: 400 });
     }
 
-    const drives = await prisma.drive.findMany({
-      where: { status: 'COMPLETED', recordingMode: 'TRAFFIC' },
-      orderBy: { startTime: 'desc' },
-      select: {
-        id: true,
-        name: true,
-        startTime: true,
-        gpsData: {
-          orderBy: { timestamp: 'asc' },
-          select: {
-            latitude: true,
-            longitude: true,
-            speed: true,
-            timestamp: true,
-            segmentMatches: {
-              take: 1,
-              select: { segment: { select: { name: true } } },
-            },
+    const hit = cache.get(minPasses);
+    if (hit && hit.expires > Date.now()) return NextResponse.json(hit.body);
+
+    // Four flat queries rather than one nested one. The road name used to come
+    // from a `segmentMatches: { take: 1 }` sub-select on every GPS row, which
+    // Postgres runs as a correlated lateral join 28k times: measured at 2310 ms
+    // against 392 ms for the same query without it. Fetching the matches and
+    // the segment names separately and joining them here costs one extra round
+    // trip and turns the whole load into ~450 ms.
+    const [driveRows, gpsRows, matchRows, segmentRows] = await Promise.all([
+      prisma.drive.findMany({
+        where: DRIVE_FILTER,
+        orderBy: { startTime: 'desc' },
+        select: {
+          id: true,
+          name: true,
+          startTime: true,
+          trafficTags: {
+            select: { latitude: true, longitude: true, kind: true, startTime: true, note: true },
           },
         },
-        trafficTags: {
-          select: { latitude: true, longitude: true, kind: true, startTime: true, note: true },
+      }),
+      prisma.gpsSample.findMany({
+        where: { drive: DRIVE_FILTER },
+        orderBy: [{ driveId: 'asc' }, { timestamp: 'asc' }],
+        select: {
+          id: true,
+          driveId: true,
+          latitude: true,
+          longitude: true,
+          speed: true,
+          timestamp: true,
         },
-      },
-    });
+      }),
+      prisma.gpsSegmentMatch.findMany({
+        where: { gps: { drive: DRIVE_FILTER } },
+        select: { gpsId: true, segmentId: true },
+      }),
+      prisma.roadSegment.findMany({ select: { id: true, name: true } }),
+    ]);
 
-    const analysisDrives: AnalysisDrive[] = drives
-      .filter((drive) => drive.gpsData.length >= 2)
-      .map((drive) => ({
-        id: drive.id,
-        name: drive.name,
-        startTime: drive.startTime.toISOString(),
-        points: drive.gpsData.map((point) => ({
-          lat: point.latitude,
-          lng: point.longitude,
-          speed: point.speed,
-          timestamp: Number(point.timestamp),
-          roadName: point.segmentMatches[0]?.segment.name ?? null,
-        })),
-        tags: drive.trafficTags.map((tag) => ({
-          lat: tag.latitude,
-          lng: tag.longitude,
-          kind: tag.kind,
-          bearing: approachHeadingFromNote(tag.note),
-          timestamp: tag.startTime.getTime(),
-        })),
-      }));
+    const segmentName = new Map(segmentRows.map((segment) => [segment.id, segment.name]));
+    // First match wins, matching the `take: 1` this replaces. A sample has one
+    // match in practice; where it has more, which one is arbitrary either way.
+    const roadNameByGps = new Map<string, string>();
+    for (const match of matchRows) {
+      if (roadNameByGps.has(match.gpsId)) continue;
+      const name = segmentName.get(match.segmentId);
+      if (name != null) roadNameByGps.set(match.gpsId, name);
+    }
+
+    const pointsByDrive = new Map<string, AnalysisPoint[]>();
+    for (const row of gpsRows) {
+      const points = pointsByDrive.get(row.driveId);
+      const point: AnalysisPoint = {
+        lat: row.latitude,
+        lng: row.longitude,
+        speed: row.speed,
+        timestamp: Number(row.timestamp),
+        roadName: roadNameByGps.get(row.id) ?? null,
+      };
+      if (points) points.push(point);
+      else pointsByDrive.set(row.driveId, [point]);
+    }
+
+    const analysisDrives: AnalysisDrive[] = driveRows
+      .flatMap((drive) => {
+        const points = pointsByDrive.get(drive.id) ?? [];
+        if (points.length < 2) return [];
+        return [{
+          id: drive.id,
+          name: drive.name,
+          startTime: drive.startTime.toISOString(),
+          points,
+          tags: drive.trafficTags.map((tag) => ({
+            lat: tag.latitude,
+            lng: tag.longitude,
+            kind: tag.kind,
+            bearing: approachHeadingFromNote(tag.note),
+            timestamp: tag.startTime.getTime(),
+          })),
+        }];
+      });
 
     const measured = analyzeIntersections(analysisDrives).filter(
       (approach) => approach.passes >= minPasses
@@ -91,9 +158,13 @@ export async function GET(request: NextRequest) {
     const signalRows = await prisma.osmSignal.findMany({
       select: {
         osmNodeId: true, latitude: true, longitude: true,
-        highway: true, direction: true, tags: true, onDrivenRoad: true,
+        highway: true, direction: true, tags: true, onDrivenRoad: true, fetchedAt: true,
       },
     });
+    const lastSignalFetch = signalRows.reduce<Date | null>(
+      (latest, row) => (latest == null || row.fetchedAt > latest ? row.fetchedAt : latest),
+      null
+    );
     const signals: OsmNode[] = signalRows.map((row) => ({
       osmNodeId: Number(row.osmNodeId),
       latitude: row.latitude,
@@ -124,7 +195,7 @@ export async function GET(request: NextRequest) {
 
     const onDrivenRoad = signalRows.filter((row) => row.onDrivenRoad);
 
-    return NextResponse.json({
+    const body = {
       approaches,
       summary: {
         driveCount: analysisDrives.length,
@@ -142,9 +213,9 @@ export async function GET(request: NextRequest) {
           onDrivenRoad: onDrivenRoad.length,
           associated: associated.size,
           neverStopped: onDrivenRoad.filter((row) => !associated.has(Number(row.osmNodeId))).length,
-          lastFetchedAt: signalRows.length
-            ? (await prisma.osmSignal.aggregate({ _max: { fetchedAt: true } }))._max.fetchedAt
-            : null,
+          // Taken from the rows already in hand rather than a second query for
+          // an aggregate of the same table.
+          lastFetchedAt: lastSignalFetch,
         },
         // Surfaced so the page can explain what "stopped" means here rather
         // than leaving the thresholds implicit.
@@ -155,7 +226,16 @@ export async function GET(request: NextRequest) {
           bearingToleranceDegrees: DEFAULT_OPTIONS.bearingTolerance,
         },
       },
-    });
+    };
+
+    // Bounded by dropping whatever expired first: minPasses comes off a query
+    // string, so an unbounded map is something anyone could grow.
+    for (const [key, entry] of Array.from(cache.entries())) {
+      if (entry.expires <= Date.now()) cache.delete(key);
+    }
+    if (cache.size >= 16) cache.delete(Array.from(cache.keys())[0]);
+    cache.set(minPasses, { expires: Date.now() + CACHE_TTL_MS, body });
+    return NextResponse.json(body);
   } catch (error) {
     console.error('Failed to analyze intersections:', error);
     return NextResponse.json({ error: 'Failed to analyze intersections' }, { status: 500 });

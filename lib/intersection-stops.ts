@@ -180,6 +180,32 @@ export function haversineMeters(
   return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+/**
+ * Fewest metres one degree of latitude can be worth. Great-circle distance is
+ * never less than the north-south separation, so a pair further apart than this
+ * in latitude alone is further apart than the radius, whatever the longitude
+ * does.
+ */
+const MIN_METERS_PER_DEGREE_LAT = 110_574;
+
+/**
+ * Cheap, exact rejection for a point that cannot be within `meters`.
+ *
+ * The expensive half of this module is asking whether each sample of each drive
+ * is inside each cluster -- clusters x drives x points haversines, the term that
+ * grows fastest as history accumulates. A drive spans tens of kilometres of
+ * latitude and a cluster is 90 m across, so nearly every pair is rejected by one
+ * subtraction. Never rejects a pair haversine would have accepted, so it changes
+ * no result.
+ */
+function beyondLatitudeBand(
+  a: { lat: number },
+  b: { lat: number },
+  meters: number
+): boolean {
+  return Math.abs(a.lat - b.lat) * MIN_METERS_PER_DEGREE_LAT > meters;
+}
+
 /** Initial bearing from a to b, degrees clockwise from north in [0, 360). */
 export function bearingDegrees(
   a: { lat: number; lng: number },
@@ -399,7 +425,8 @@ export function findVisits(
   };
 
   for (let i = 0; i < points.length; i++) {
-    const inside = haversineMeters(points[i], cluster) <= options.passRadius;
+    const inside = !beyondLatitudeBand(points[i], cluster, options.passRadius) &&
+      haversineMeters(points[i], cluster) <= options.passRadius;
     if (inside && insideSince === null) insideSince = i;
     if (!inside && insideSince !== null) closeVisit(i - 1);
   }
@@ -579,6 +606,7 @@ export function analyzeIntersections(
     let match: (typeof clusters)[number] | null = null;
     let matchDistance = Infinity;
     for (const cluster of clusters) {
+      if (beyondLatitudeBand(stop, cluster, options.clusterRadius)) continue;
       const distance = haversineMeters(stop, cluster);
       if (distance > options.clusterRadius || distance >= matchDistance) continue;
       if (bearingDelta(stop.bearing, cluster.bearing) > options.bearingTolerance) continue;
