@@ -8,6 +8,7 @@ import {
   type MatchedEdge,
 } from '@/lib/map-matching';
 import { calculateBoundingBox } from '@/lib/segment-matching';
+import { spatialKeyFor } from '@/lib/segment-identity';
 import { analyzeDirections } from '@/lib/trip-directions';
 import { runCongestionAnalysis, type CongestionAnalysisResult } from '@/lib/post-processing';
 import { findMatchingRouteTemplate } from '@/lib/route-template-matching';
@@ -143,10 +144,51 @@ function findManualMatch(
   return best;
 }
 
+/**
+ * Store each matched edge as a RoadSegment, reusing the row for a stretch
+ * already driven.
+ *
+ * Identity comes from the spatial key, not from Mapbox's sourceId: the same
+ * road matched twice comes back with different OpenLR references, so keying on
+ * them files every re-drive as a new road. Edges the key declines to identify
+ * -- unnamed ones, and any too short to have distinct endpoints -- keep the old
+ * sourceId behaviour, which over-creates but never wrongly merges.
+ *
+ * The spatial key has no unique constraint yet, so the reuse is a read followed
+ * by a write rather than an upsert. Two concurrent analyses of the same road can
+ * still both insert; that is the duplicate the constraint in the final phase
+ * closes off, and until then the read-layer dedupe covers it.
+ */
 async function upsertEdges(edges: MatchedEdge[]): Promise<Map<string, string>> {
   const result = new Map<string, string>();
   for (const edge of edges) {
     const bounds = calculateBoundingBox(edge.geometry);
+    const spatialKey = spatialKeyFor(edge);
+    const data = {
+      name: edge.name,
+      geometry: edge.geometry as unknown as Prisma.InputJsonValue,
+      ...bounds,
+      isActive: true,
+    };
+
+    if (spatialKey) {
+      const existing = await prisma.roadSegment.findFirst({
+        where: { source: 'MAPBOX', spatialKey },
+        // Oldest wins, so an id already referenced by history keeps being the
+        // one written to.
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      const segment = existing
+        ? await prisma.roadSegment.update({ where: { id: existing.id }, data, select: { id: true } })
+        : await prisma.roadSegment.create({
+            data: { ...data, source: 'MAPBOX', sourceId: edge.sourceId, spatialKey },
+            select: { id: true },
+          });
+      result.set(edge.sourceId, segment.id);
+      continue;
+    }
+
     const segment = await prisma.roadSegment.upsert({
       where: { source_sourceId: { source: 'MAPBOX', sourceId: edge.sourceId } },
       create: {
@@ -156,12 +198,7 @@ async function upsertEdges(edges: MatchedEdge[]): Promise<Map<string, string>> {
         source: 'MAPBOX',
         sourceId: edge.sourceId,
       },
-      update: {
-        name: edge.name,
-        geometry: edge.geometry as unknown as Prisma.InputJsonValue,
-        ...bounds,
-        isActive: true,
-      },
+      update: data,
       select: { id: true },
     });
     result.set(edge.sourceId, segment.id);

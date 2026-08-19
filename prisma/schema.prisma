@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   // Migrations must bypass Neon's pooler: PgBouncer runs in transaction mode,
   // which does not carry the session-level advisory locks Prisma Migrate takes
   // out. The app keeps using the pooled URL above for queries.
@@ -61,7 +61,7 @@ model Drive {
   trafficTags       TrafficTag[]
   pausedIntervals   PausedInterval[]
   tripAnalysis      TripAnalysis?
-  routeTemplate     RouteTemplate? @relation(fields: [routeTemplateId], references: [id], onDelete: SetNull)
+  routeTemplate     RouteTemplate?        @relation(fields: [routeTemplateId], references: [id], onDelete: SetNull)
 
   @@index([createdAt(sort: Desc)])
   @@index([status])
@@ -69,16 +69,16 @@ model Drive {
 }
 
 model RouteTemplate {
-  id             String   @id @default(cuid())
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  name           String
-  geometry       Json
-  distance       Float
-  direction      CardinalDirection?
-  referenceDriveId String @unique
-  isActive       Boolean @default(true)
-  drives         Drive[]
+  id               String             @id @default(cuid())
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  name             String
+  geometry         Json
+  distance         Float
+  direction        CardinalDirection?
+  referenceDriveId String             @unique
+  isActive         Boolean            @default(true)
+  drives           Drive[]
 
   @@index([isActive])
 }
@@ -163,10 +163,16 @@ model RoadSegment {
   maxLon Float
 
   // Metadata
-  roadType RoadType?
-  source   SegmentSource @default(MANUAL)
-  sourceId String? // OSM way ID if imported
-  isActive Boolean       @default(true)
+  roadType   RoadType?
+  source     SegmentSource @default(MANUAL)
+  sourceId   String? // OSM way ID if imported
+  /// Deterministic identity for the physical stretch, from lib/segment-identity.ts.
+  /// Mapbox's OpenLR sourceId changes between matches of the same road, so it
+  /// cannot be the merge key; this can. Null for edges the key refuses to
+  /// identify (unnamed, or too short to have distinct endpoints), which keep
+  /// falling back to sourceId.
+  spatialKey String?
+  isActive   Boolean       @default(true)
 
   // Relations
   congestionEvents  CongestionEvent[]
@@ -174,6 +180,7 @@ model RoadSegment {
   gpsSegmentMatches GpsSegmentMatch[]
 
   @@unique([source, sourceId])
+  @@index([source, spatialKey])
   @@index([minLat, maxLat, minLon, maxLon])
   @@index([name])
 }
@@ -348,20 +355,20 @@ enum TrafficTagKind {
 }
 
 model TrafficTag {
-  id         String         @id @default(cuid())
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-  driveId    String
-  drive      Drive          @relation(fields: [driveId], references: [id], onDelete: Cascade)
-  featureKey String
+  id          String         @id @default(cuid())
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  driveId     String
+  drive       Drive          @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  featureKey  String
   featureType String
-  kind       TrafficTagKind
-  note       String?
-  latitude   Float
-  longitude  Float
-  startTime  DateTime
-  endTime    DateTime
-  duration   Int
+  kind        TrafficTagKind
+  note        String?
+  latitude    Float
+  longitude   Float
+  startTime   DateTime
+  endTime     DateTime
+  duration    Int
 
   @@unique([driveId, featureKey])
   @@index([driveId])
@@ -375,8 +382,8 @@ model PausedInterval {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
 
-  driveId String
-  drive   Drive  @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  driveId  String
+  drive    Drive  @relation(fields: [driveId], references: [id], onDelete: Cascade)
   /// The device's own UUID for this pause, making re-ingest of a retried
   /// upload idempotent via the unique index below.
   clientId String
