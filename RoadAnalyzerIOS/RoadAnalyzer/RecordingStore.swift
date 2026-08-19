@@ -238,6 +238,7 @@ final class RecordingStore: NSObject, ObservableObject {
         lastMovementAt = nil
         stillnessSnoozedUntil = nil
         clearStillDrivingPrompt()
+        Notifications.requestAuthorizationIfNeeded()
         startSensors()
         publishLive()
         persist()
@@ -659,6 +660,13 @@ final class RecordingStore: NSObject, ObservableObject {
             clearStillDrivingPrompt()
             stop(endingAt: prompt.lastMovedAt)
             statusMessage = "Drive ended automatically — the car had not moved for a while"
+            // Nobody saw the prompt, so nobody will see the status line either.
+            // Counts the review queue rather than the finished drive: what the
+            // driver needs to know is whether anything is waiting on them.
+            Notifications.driveEndedAutomatically(
+                at: prompt.lastMovedAt,
+                untaggedStops: reviewSession?.untaggedStops.count ?? 0
+            )
             return
         }
 

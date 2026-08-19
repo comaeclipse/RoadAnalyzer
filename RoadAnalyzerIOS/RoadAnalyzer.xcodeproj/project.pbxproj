@@ -19,6 +19,7 @@
 		A1000000000000000000001A /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000C /* Haptics.swift */; };
 		A1000000000000000000001B /* StopPromptOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000D /* StopPromptOverlay.swift */; };
 		A10000000000000000000071 /* StillDrivingOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000070 /* StillDrivingOverlay.swift */; };
+		A10000000000000000000073 /* Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000072 /* Notifications.swift */; };
 		A1000000000000000000001C /* StopReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000E /* StopReviewView.swift */; };
 /* End PBXBuildFile section */
 
@@ -37,6 +38,7 @@
 		A1000000000000000000000C /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		A1000000000000000000000D /* StopPromptOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopPromptOverlay.swift; sourceTree = "<group>"; };
 		A10000000000000000000070 /* StillDrivingOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StillDrivingOverlay.swift; sourceTree = "<group>"; };
+		A10000000000000000000072 /* Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifications.swift; sourceTree = "<group>"; };
 		A1000000000000000000000E /* StopReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopReviewView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -73,6 +75,7 @@
 				A1000000000000000000000C /* Haptics.swift */,
 				A1000000000000000000000D /* StopPromptOverlay.swift */,
 				A10000000000000000000070 /* StillDrivingOverlay.swift */,
+				A10000000000000000000072 /* Notifications.swift */,
 				A1000000000000000000000E /* StopReviewView.swift */,
 				A10000000000000000000007 /* Info.plist */,
 				A10000000000000000000008 /* PrivacyInfo.xcprivacy */,
@@ -166,6 +169,7 @@
 				A1000000000000000000001A /* Haptics.swift in Sources */,
 				A1000000000000000000001B /* StopPromptOverlay.swift in Sources */,
 				A10000000000000000000071 /* StillDrivingOverlay.swift in Sources */,
+				A10000000000000000000073 /* Notifications.swift in Sources */,
 				A1000000000000000000001C /* StopReviewView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
