@@ -217,13 +217,7 @@ export function totalPausedDuration(
 }
 
 /// True when `timestamp` falls inside any paused interval. Used to keep paused
-/// spans out of both the distance accumulator and the duration.
-export function isWithinPause(
-  intervals: MobilePausedInterval[] | undefined,
-  timestamp: number,
-  endedAt: number
-): boolean {
-  return (intervals ?? []).some(
-    (pause) => timestamp >= pause.startedAt && timestamp <= Math.min(pause.endedAt ?? endedAt, endedAt)
-  );
-}
+/// spans out of both the distance accumulator and the duration. Re-exported
+/// from lib/pauses so ingest, analysis, and the map all read a pause the same
+/// way.
+export { isWithinPause } from './pauses';

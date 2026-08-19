@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { straddlesPause, type PauseSpan } from '@/lib/pauses';
 import { useParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -209,6 +210,7 @@ export default function RecordingDetailPage() {
   const [tripAnalysis, setTripAnalysis] = useState<TripAnalysis | null>(null);
   const [maneuvers, setManeuvers] = useState<Maneuver[]>([]);
   const [trafficTags, setTrafficTags] = useState<TrafficTag[]>([]);
+  const [pausedIntervals, setPausedIntervals] = useState<PauseSpan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -249,6 +251,7 @@ export default function RecordingDetailPage() {
         setTripAnalysis(data.tripAnalysis || null);
         setManeuvers(data.maneuvers || []);
         setTrafficTags(data.trafficTags || []);
+        setPausedIntervals(data.pausedIntervals || []);
         setRouteName(data.drive.name || '');
       } catch (err) {
         setError('Failed to load recording');
@@ -360,6 +363,11 @@ export default function RecordingDetailPage() {
     return `${mph.toFixed(1)} mph`;
   };
 
+  // A pause left in place would read as one very long stop: the fix before it
+  // and the fix after it are both stationary, and nothing in the speed trace
+  // says the minutes between them were spent with the recording off.
+  const driveEnd = drive?.endTime ? new Date(drive.endTime).getTime() : Number.POSITIVE_INFINITY;
+
   // Detect stops and slow zones from GPS data
   const detectStopsAndSlowZones = () => {
     const stops: TrafficFeature[] = [];
@@ -376,6 +384,15 @@ export default function RecordingDetailPage() {
     for (let i = 0; i < gpsPoints.length; i++) {
       const point = gpsPoints[i];
       const speed = point.speed || 0;
+
+      // Close anything open before crossing a pause rather than measuring
+      // through it. The run is dropped rather than emitted: its real duration
+      // is unknowable, since the driver may have sat still or driven off.
+      if (i > 0 && straddlesPause(pausedIntervals, gpsPoints[i - 1].timestamp, point.timestamp, driveEnd)) {
+        stopStart = null;
+        slowStart = null;
+        slowSpeeds = [];
+      }
 
       // Detect stops
       if (speed < STOP_THRESHOLD) {
@@ -815,6 +832,7 @@ export default function RecordingDetailPage() {
           {gpsPoints.length > 0 ? (
             <RouteMap
               points={gpsPoints}
+              pausedIntervals={pausedIntervals}
               accelPoints={accelPoints}
               mode={drive.recordingMode}
               matchedGeometry={tripAnalysis?.matchedGeometry}

@@ -1,4 +1,5 @@
 import * as turf from '@turf/turf';
+import { PauseSpan, splitAtPauses } from './pauses';
 
 export const MAPBOX_MATCHING_VERSION = 'v5';
 export const MAPBOX_MAX_COORDINATES = 100;
@@ -169,7 +170,24 @@ export function prepareTrace(points: MatchInputPoint[]): PreparedMatchPoint[] {
   return prepared;
 }
 
-export function chunkTrace(points: PreparedMatchPoint[]): PreparedMatchPoint[][] {
+/**
+ * Splits into request-sized chunks, never letting one span a pause. Mapbox
+ * matches a chunk as a single continuous drive, so a chunk holding both sides
+ * of a pause comes back routed along whatever roads connect them -- a path the
+ * driver never took, drawn with the same confidence as the rest of the trace.
+ * Matching each side separately leaves an honest gap instead.
+ */
+export function chunkTrace(
+  points: PreparedMatchPoint[],
+  pauses?: readonly PauseSpan[]
+): PreparedMatchPoint[][] {
+  const spans = pauses?.length
+    ? splitAtPauses(points, pauses, (point) => point.timestamp, Number.POSITIVE_INFINITY)
+    : [points];
+  return spans.flatMap(chunkSpan);
+}
+
+function chunkSpan(points: PreparedMatchPoint[]): PreparedMatchPoint[][] {
   if (points.length <= MAPBOX_MAX_COORDINATES) return points.length >= 2 ? [points] : [];
   const chunks: PreparedMatchPoint[][] = [];
   const stride = MAPBOX_MAX_COORDINATES - MAPBOX_CHUNK_OVERLAP;
@@ -441,13 +459,13 @@ function appendGeometry(target: [number, number][], source: GeoJSON.Position[]):
 
 export async function matchTrace(
   input: MatchInputPoint[],
-  options: { token?: string; fetchImpl?: typeof fetch; concurrency?: number } = {}
+  options: { token?: string; fetchImpl?: typeof fetch; concurrency?: number; pauses?: readonly PauseSpan[] } = {}
 ): Promise<MapMatchResult> {
   const token = options.token ?? process.env.MAPBOX_ACCESS_TOKEN;
   if (!token) throw new MapMatchingError('MISSING_TOKEN', true, 'MAPBOX_ACCESS_TOKEN is not configured');
   const prepared = prepareTrace(input);
   if (prepared.length < 2) throw new MapMatchingError('INSUFFICIENT_POINTS', false);
-  const chunks = chunkTrace(prepared);
+  const chunks = chunkTrace(prepared, options.pauses);
   const fetchImpl = options.fetchImpl ?? fetch;
   const responses: Array<MapboxResponse | MapMatchingError> = new Array(chunks.length);
   let cursor = 0;

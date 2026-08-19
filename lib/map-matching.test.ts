@@ -41,6 +41,33 @@ describe('trace preparation', () => {
     expect(chunks[0].slice(-5).map((item) => item.id))
       .toEqual(chunks[1].slice(0, 5).map((item) => item.id));
   });
+
+  it('never chunks across a pause, so Mapbox cannot route the gap', () => {
+    // 5 s apart, so prepareTrace keeps every point.
+    const points = Array.from({ length: 8 }, (_, index) => point(index, { timestamp: index * 5_000 }));
+    const prepared = prepareTrace(points);
+    const chunks = chunkTrace(prepared, [{ startedAt: 16_000, endedAt: 19_000 }]);
+
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].map((item) => item.id)).toEqual(['point-0', 'point-1', 'point-2', 'point-3']);
+    expect(chunks[1].map((item) => item.id)).toEqual(['point-4', 'point-5', 'point-6', 'point-7']);
+  });
+
+  it('drops points recorded inside a pause', () => {
+    const points = Array.from({ length: 8 }, (_, index) => point(index, { timestamp: index * 5_000 }));
+    const prepared = prepareTrace(points);
+    // Wide enough to swallow point-3 and point-4 outright.
+    const chunks = chunkTrace(prepared, [{ startedAt: 15_000, endedAt: 20_000 }]);
+
+    expect(chunks.flat().map((item) => item.id)).not.toContain('point-3');
+    expect(chunks.flat().map((item) => item.id)).not.toContain('point-4');
+  });
+
+  it('leaves an unpaused trace in one piece', () => {
+    const prepared = prepareTrace(Array.from({ length: 8 }, (_, index) => point(index, { timestamp: index * 5_000 })));
+    expect(chunkTrace(prepared, [])).toHaveLength(1);
+    expect(chunkTrace(prepared)).toHaveLength(1);
+  });
 });
 
 describe('Mapbox normalization', () => {

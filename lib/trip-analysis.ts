@@ -182,22 +182,33 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
     };
   }
 
-  const gpsSamples = await prisma.gpsSample.findMany({
-    where: { driveId },
-    orderBy: { timestamp: 'asc' },
-    select: {
-      id: true,
-      latitude: true,
-      longitude: true,
-      timestamp: true,
-      accuracy: true,
-      heading: true,
-      speed: true,
-    },
-  });
+  const [gpsSamples, pauseRows] = await Promise.all([
+    prisma.gpsSample.findMany({
+      where: { driveId },
+      orderBy: { timestamp: 'asc' },
+      select: {
+        id: true,
+        latitude: true,
+        longitude: true,
+        timestamp: true,
+        accuracy: true,
+        heading: true,
+        speed: true,
+      },
+    }),
+    prisma.pausedInterval.findMany({
+      where: { driveId },
+      orderBy: { startedAt: 'asc' },
+      select: { startedAt: true, endedAt: true },
+    }),
+  ]);
+  const pauses = pauseRows.map((pause) => ({
+    startedAt: pause.startedAt.getTime(),
+    endedAt: pause.endedAt?.getTime() ?? null,
+  }));
 
   try {
-    const result = await matchTrace(gpsSamples);
+    const result = await matchTrace(gpsSamples, { pauses });
     const [edgeIds, manualSegments] = await Promise.all([
       upsertEdges(result.edges),
       prisma.roadSegment.findMany({

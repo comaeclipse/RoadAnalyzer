@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { MapboxLineMap, type MapLine, type MapMarker } from '@/components/maps/MapboxLineMap';
 import { getSpeedColor } from '@/lib/speed';
+import { splitAtPauses, type PauseSpan } from '@/lib/pauses';
 
 interface GpsPoint {
   lat: number;
@@ -64,6 +65,12 @@ export interface CongestionOverlay {
 
 interface RouteMapProps {
   points: GpsPoint[];
+  /**
+   * Spans the driver removed from the drive. No GPS exists across one, so every
+   * line here breaks at its edges instead of drawing a leg the driver never
+   * took. Epoch milliseconds, matching GpsPoint.timestamp.
+   */
+  pausedIntervals?: PauseSpan[];
   accelPoints?: AccelPoint[];
   mode?: 'ROAD_QUALITY' | 'TRAFFIC';
   matchedGeometry?: GeoJSON.LineString | null;
@@ -91,6 +98,7 @@ function roughnessColor(value: number): string {
 
 export default function RouteMap({
   points,
+  pausedIntervals = [],
   accelPoints = [],
   mode = 'ROAD_QUALITY',
   matchedGeometry,
@@ -99,19 +107,31 @@ export default function RouteMap({
   selectedTrafficFeatureId,
   onTrafficFeatureSelect,
 }: RouteMapProps) {
+  // An open pause runs to the end of the trace, so the last sample is the
+  // fallback end rather than the drive's own endTime, which this component
+  // does not take.
+  const traceEnd = points.length ? points[points.length - 1].timestamp : Number.POSITIVE_INFINITY;
+
+  // The recorded runs, with paused spans cut out. One group when the driver
+  // never paused, which is the ordinary case.
+  const spans = useMemo(
+    () => splitAtPauses(points, pausedIntervals, (point) => point.timestamp, traceEnd),
+    [pausedIntervals, points, traceEnd]
+  );
+
   const lines = useMemo<MapLine[]>(() => {
     if (points.length < 2) return [];
     if (matchedGeometry?.coordinates?.length) {
       return [
-        {
-          id: 'raw-route',
-          coordinates: points.map((point) => [point.lng, point.lat]),
+        ...spans.flatMap((span, index) => span.length < 2 ? [] : [{
+          id: `raw-route-${index}`,
+          coordinates: span.map((point) => [point.lng, point.lat] as GeoJSON.Position),
           color: '#9ca3af',
           width: 2,
           opacity: 0.65,
           dashed: true,
           label: 'Raw GPS trace',
-        },
+        }]),
         {
           id: 'matched-route',
           coordinates: matchedGeometry.coordinates,
@@ -121,22 +141,24 @@ export default function RouteMap({
         },
       ];
     }
-    return points.slice(0, -1).map((point, index) => {
-      let color = getSpeedColor(point.speed);
-      if (mode === 'ROAD_QUALITY') {
-        const relevant = accelPoints.filter(
-          (sample) => sample.timestamp >= point.timestamp && sample.timestamp <= points[index + 1].timestamp
-        );
-        color = relevant.length ? roughnessColor(calculateRoughness(relevant)) : '#374151';
-      }
-      return {
-        id: `raw-${index}`,
-        coordinates: [[point.lng, point.lat], [points[index + 1].lng, points[index + 1].lat]],
-        color,
-        width: 4,
-      };
-    });
-  }, [accelPoints, matchedGeometry, mode, points]);
+    return spans.flatMap((span, spanIndex) =>
+      span.slice(0, -1).map((point, index) => {
+        let color = getSpeedColor(point.speed);
+        if (mode === 'ROAD_QUALITY') {
+          const relevant = accelPoints.filter(
+            (sample) => sample.timestamp >= point.timestamp && sample.timestamp <= span[index + 1].timestamp
+          );
+          color = relevant.length ? roughnessColor(calculateRoughness(relevant)) : '#374151';
+        }
+        return {
+          id: `raw-${spanIndex}-${index}`,
+          coordinates: [[point.lng, point.lat], [span[index + 1].lng, span[index + 1].lat]],
+          color,
+          width: 4,
+        };
+      })
+    );
+  }, [accelPoints, matchedGeometry, mode, points, spans]);
 
   // Only stops get a line here. Slow zones used to draw their own orange line,
   // but stored congestion events now cover the same ground with better data, so
@@ -145,18 +167,21 @@ export default function RouteMap({
   const trafficLines = useMemo<MapLine[]>(() => {
     if (mode !== 'TRAFFIC') return [];
     return stops.flatMap((feature) => {
-      const coordinates = points.slice(feature.start, feature.end + 1).map(drawnPosition);
-      if (coordinates.length < 2) return [];
-      return [{
-        id: `traffic-${feature.id}`,
-        coordinates,
-        color: '#dc2626',
-        width: 7,
-        opacity: 0.95,
-        label: `Detected stop — ${formatDuration(feature.duration)}`,
-      }];
+      const covered = points.slice(feature.start, feature.end + 1);
+      return splitAtPauses(covered, pausedIntervals, (point) => point.timestamp, traceEnd).flatMap((run, index) => {
+        const coordinates = run.map(drawnPosition);
+        if (coordinates.length < 2) return [];
+        return [{
+          id: `traffic-${feature.id}-${index}`,
+          coordinates,
+          color: '#dc2626',
+          width: 7,
+          opacity: 0.95,
+          label: `Detected stop — ${formatDuration(feature.duration)}`,
+        }];
+      });
     });
-  }, [mode, points, stops]);
+  }, [mode, pausedIntervals, points, stops, traceEnd]);
 
   // Stored congestion events, drawn as an orange band along the trace they cover.
   // Events are built from GPS sample timestamps server side, so the times line up
@@ -167,23 +192,24 @@ export default function RouteMap({
       const start = new Date(event.startTime).getTime();
       const end = new Date(event.endTime).getTime();
       if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
-      const coordinates = points
-        .filter((point) => point.timestamp >= start && point.timestamp <= end)
-        .map(drawnPosition);
-      if (coordinates.length < 2) return [];
+      const covered = points.filter((point) => point.timestamp >= start && point.timestamp <= end);
       const where = event.segment?.name ? ` on ${event.segment.name}` : '';
-      return [{
-        id: `congestion-${event.id}`,
-        coordinates,
-        color: CONGESTION_ORANGE,
-        width: 10,
-        opacity: 0.55,
-        label:
-          `${severityLabel(event.severity)}${where} — ${formatDuration(event.duration)}` +
-          ` at ${(event.avgSpeed * 2.23694).toFixed(1)} mph`,
-      }];
+      return splitAtPauses(covered, pausedIntervals, (point) => point.timestamp, traceEnd).flatMap((run, index) => {
+        const coordinates = run.map(drawnPosition);
+        if (coordinates.length < 2) return [];
+        return [{
+          id: `congestion-${event.id}-${index}`,
+          coordinates,
+          color: CONGESTION_ORANGE,
+          width: 10,
+          opacity: 0.55,
+          label:
+            `${severityLabel(event.severity)}${where} — ${formatDuration(event.duration)}` +
+            ` at ${(event.avgSpeed * 2.23694).toFixed(1)} mph`,
+        }];
+      });
     });
-  }, [congestionEvents, mode, points]);
+  }, [congestionEvents, mode, pausedIntervals, points, traceEnd]);
 
   const markers = useMemo<MapMarker[]>(() => {
     if (!points.length) return [];
@@ -225,6 +251,9 @@ export default function RouteMap({
           </>
         ) : (
           <span>{mode === 'TRAFFIC' ? 'Route colored by recorded speed.' : 'Route colored by road roughness.'}</span>
+        )}
+        {spans.length > 1 && (
+          <span>Trace broken where the drive was paused; no GPS was recorded across those gaps.</span>
         )}
         {congestionLines.length > 0 && (
           <span>

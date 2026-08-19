@@ -39,7 +39,7 @@ export async function GET(
     }
 
     // Fetch GPS, accelerometer, and congestion data in parallel
-    const [gpsData, accelData, congestionEvents, analysisRecord, trafficTags] = await Promise.all([
+    const [gpsData, accelData, congestionEvents, analysisRecord, trafficTags, pausedIntervalRows] = await Promise.all([
       prisma.gpsSample.findMany({
         where: { driveId: id },
         orderBy: { timestamp: 'asc' },
@@ -90,6 +90,11 @@ export async function GET(
         include: { maneuvers: { orderBy: { sequence: 'asc' } } },
       }),
       prisma.trafficTag.findMany({ where: { driveId: id }, orderBy: { createdAt: 'asc' } }),
+      prisma.pausedInterval.findMany({
+        where: { driveId: id },
+        orderBy: { startedAt: 'asc' },
+        select: { id: true, startedAt: true, endedAt: true, duration: true, endedBy: true },
+      }),
     ]);
 
     // Convert BigInt timestamps to numbers for JSON serialization
@@ -99,6 +104,18 @@ export async function GET(
       speed: point.speed,
       timestamp: Number(point.timestamp),
       match: point.segmentMatches[0] ?? null,
+    }));
+
+    // Epoch milliseconds, matching gpsPoints.timestamp, so the client can test
+    // a sample against a pause without reparsing dates per point. A pause left
+    // open by a drive that died mid-pause keeps endedAt null; consumers treat
+    // that as running to the end of the drive.
+    const pausedIntervals = pausedIntervalRows.map((interval) => ({
+      id: interval.id,
+      startedAt: interval.startedAt.getTime(),
+      endedAt: interval.endedAt?.getTime() ?? null,
+      duration: interval.duration,
+      endedBy: interval.endedBy,
     }));
 
     const accelPoints = accelData.map((point) => ({
@@ -146,6 +163,7 @@ export async function GET(
       tripAnalysis,
       maneuvers,
       trafficTags,
+      pausedIntervals,
       routeTemplate: drive.routeTemplate,
     });
   } catch (error) {

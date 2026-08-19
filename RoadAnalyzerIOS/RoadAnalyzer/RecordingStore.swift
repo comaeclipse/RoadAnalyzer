@@ -371,21 +371,27 @@ final class RecordingStore: NSObject, ObservableObject {
 
     private func append(_ samples: [LocationSample]) {
         guard active != nil else { return }
+        // A pause stops standard location updates, but two kinds of fix still
+        // arrive: one already in flight when the driver paused, and the
+        // significant-change updates `pause()` deliberately subscribes to so
+        // iOS relaunches us if the car moves on. Neither belongs in the drive
+        // -- stored, they upload and draw as a trace of where the driver went
+        // while the recording was supposed to be off.
+        guard !isPaused else {
+            publishLive()
+            return
+        }
         // Appended straight into the stored session: `var copy = active` first
         // would keep a second reference alive across the append and copy the
         // whole array every time.
         active?.locations.append(contentsOf: samples)
         let count = active?.locations.count ?? 0
 
-        // A pause stops location updates, but a fix already in flight can still
-        // land here; it must not feed the detector or the route.
-        if !isPaused {
-            for sample in samples {
-                extendRoute(with: sample)
-                handle(detector.ingest(sample))
-            }
-            publishRoute()
+        for sample in samples {
+            extendRoute(with: sample)
+            handle(detector.ingest(sample))
         }
+        publishRoute()
         publishLive()
         if count.isMultiple(of: 10) { persist() }
     }
