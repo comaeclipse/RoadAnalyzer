@@ -1,6 +1,8 @@
 # Scope: write-time stable segment identity
 
-**Status:** proposal / not started
+**Status:** superseded in part — see §10. The endpoint key in §4 was built, dry-run,
+and found not to work; identity is tiles instead. Phases 1–3 of the tiling are
+implemented; the backfill has not been applied.
 **Goal:** stop the ingest pipeline from creating duplicate `RoadSegment` rows for
 the same physical stretch of road, so the read-layer dedupe
 ([lib/segment-dedupe.ts](../lib/segment-dedupe.ts)) becomes a safety net instead of
@@ -148,3 +150,45 @@ tables / less per-request dedupe work as data grows, (c) `SegmentStatistics` tha
 correct at the row level (useful if other features read them directly, e.g.
 [app/api/segments](../app/api/segments)). If none of those are near-term needs, this
 can wait.
+
+
+---
+
+## 10. What the dry run changed (2026-08-19)
+
+§4's key — name plus the two endpoints, rounded — was implemented and dry-run
+against prod. It collapsed **144 rows to 139**, against an expectation of
+something like 144 → 58.
+
+The premise is wrong for this data. §4 assumes two matches of one stretch share
+endpoints to within a grid cell. They do not: Mapbox returns whatever extent a
+drive covered, so "New Warrington Road" is 26 rows running 671 m to 7615 m over
+the same corridor, each starting and ending wherever the trace entered and left
+the road. Their endpoints differ by hundreds of metres to kilometres, and the
+rounding coarse enough to merge them would merge different roads instead. This
+is not the grid-boundary weakness §3 anticipated; the extents genuinely differ.
+
+**Identity is therefore not derived from the matched extent at all.** A road is
+cut into fixed tiles by a grid laid over the world (`TILE_DEGREES = 0.005`, about
+557 m), and a segment is one tile of one road. Whatever a drive matches, it lands
+on the same tiles as every other drive over the same ground.
+
+This keeps every property §3 wanted from Option A — deterministic, pure,
+race-safe under a unique constraint — and adds independence from the matched
+extent. What it changes:
+
+- **Row count goes up, not down.** 144 rows become ~322 tiles plus 13 stubs on
+  roads with no tiles to move to. The point is that the count now tracks
+  road-kilometres covered rather than drives: re-driving the commute adds none.
+- **A segment is no longer a junction-to-junction stretch.** Tile boundaries fall
+  where the grid says. Median tile is 450 m, max 1034 m.
+- **Congestion events break at tile boundaries.** `detectCongestion` already ends
+  an event when the segment changes, so a jam spanning two tiles becomes two
+  events for drives analysed from here on. Events already stored are repointed,
+  not re-detected, so history and new data disagree on this until congestion
+  analysis is re-run over the back catalogue.
+- **Unnamed edges keep the old per-sourceId row.** Nothing distinguishes two
+  unnamed stubs in one cell, per §5.2.
+
+§6's ordering still holds and is what the backfill implements; only the
+clustering step changed, from "group duplicates" to "re-tile".

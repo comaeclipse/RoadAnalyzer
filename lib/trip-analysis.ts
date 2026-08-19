@@ -8,7 +8,7 @@ import {
   type MatchedEdge,
 } from '@/lib/map-matching';
 import { calculateBoundingBox } from '@/lib/segment-matching';
-import { spatialKeyFor } from '@/lib/segment-identity';
+import { tileEdge, tileKeyAt, type SegmentTile } from '@/lib/segment-identity';
 import { analyzeDirections } from '@/lib/trip-directions';
 import { runCongestionAnalysis, type CongestionAnalysisResult } from '@/lib/post-processing';
 import { findMatchingRouteTemplate } from '@/lib/route-template-matching';
@@ -145,65 +145,162 @@ function findManualMatch(
 }
 
 /**
- * Store each matched edge as a RoadSegment, reusing the row for a stretch
+ * The RoadSegment rows a set of matched edges maps onto.
+ *
+ * Named roads resolve through `byTileKey`: identity is the tile, so a sample is
+ * filed by looking up the tile its snapped position falls in. Unnamed edges get
+ * no tiles -- there is nothing to tell two unnamed stubs in one cell apart --
+ * and keep the old per-sourceId row, reached through `bySourceId`.
+ */
+interface EdgeSegments {
+  byTileKey: Map<string, { id: string; geometry: GeoJSON.LineString }>;
+  bySourceId: Map<string, string>;
+  tilesBySourceId: Map<string, SegmentTile[]>;
+}
+
+/**
+ * Store each matched edge as RoadSegment rows, reusing the rows for ground
  * already driven.
  *
- * Identity comes from the spatial key, not from Mapbox's sourceId: the same
- * road matched twice comes back with different OpenLR references, so keying on
- * them files every re-drive as a new road. Edges the key declines to identify
- * -- unnamed ones, and any too short to have distinct endpoints -- keep the old
- * sourceId behaviour, which over-creates but never wrongly merges.
+ * A named edge is cut into tiles and each tile is its own row, so the row for a
+ * stretch is the same however far this particular drive travelled along it.
+ * Mapbox's sourceId is kept as provenance only; keying on it filed every
+ * re-drive as a new road.
  *
- * The spatial key has no unique constraint yet, so the reuse is a read followed
- * by a write rather than an upsert. Two concurrent analyses of the same road can
- * still both insert; that is the duplicate the constraint in the final phase
- * closes off, and until then the read-layer dedupe covers it.
+ * There is no unique constraint on the key yet, so reuse is a read followed by a
+ * write rather than an upsert, and two concurrent analyses of one road can still
+ * both insert. The constraint closes that; until then the read-layer dedupe
+ * covers it.
  */
-async function upsertEdges(edges: MatchedEdge[]): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+async function upsertEdges(edges: MatchedEdge[]): Promise<EdgeSegments> {
+  const byTileKey: EdgeSegments['byTileKey'] = new Map();
+  const bySourceId = new Map<string, string>();
+  const tilesBySourceId = new Map<string, SegmentTile[]>();
+
   for (const edge of edges) {
-    const bounds = calculateBoundingBox(edge.geometry);
-    const spatialKey = spatialKeyFor(edge);
-    const data = {
-      name: edge.name,
-      geometry: edge.geometry as unknown as Prisma.InputJsonValue,
-      ...bounds,
-      isActive: true,
-    };
+    const tiles = tileEdge(edge);
+    tilesBySourceId.set(edge.sourceId, tiles);
 
-    if (spatialKey) {
-      const existing = await prisma.roadSegment.findFirst({
-        where: { source: 'MAPBOX', spatialKey },
-        // Oldest wins, so an id already referenced by history keeps being the
-        // one written to.
-        orderBy: { createdAt: 'asc' },
-        select: { id: true },
-      });
-      const segment = existing
-        ? await prisma.roadSegment.update({ where: { id: existing.id }, data, select: { id: true } })
-        : await prisma.roadSegment.create({
-            data: { ...data, source: 'MAPBOX', sourceId: edge.sourceId, spatialKey },
-            select: { id: true },
-          });
-      result.set(edge.sourceId, segment.id);
-      continue;
-    }
-
-    const segment = await prisma.roadSegment.upsert({
-      where: { source_sourceId: { source: 'MAPBOX', sourceId: edge.sourceId } },
-      create: {
+    if (tiles.length === 0) {
+      const bounds = calculateBoundingBox(edge.geometry);
+      const data = {
         name: edge.name,
         geometry: edge.geometry as unknown as Prisma.InputJsonValue,
         ...bounds,
-        source: 'MAPBOX',
-        sourceId: edge.sourceId,
-      },
-      update: data,
-      select: { id: true },
-    });
-    result.set(edge.sourceId, segment.id);
+        isActive: true,
+      };
+      const segment = await prisma.roadSegment.upsert({
+        where: { source_sourceId: { source: 'MAPBOX', sourceId: edge.sourceId } },
+        create: { ...data, source: 'MAPBOX', sourceId: edge.sourceId },
+        update: data,
+        select: { id: true },
+      });
+      bySourceId.set(edge.sourceId, segment.id);
+      continue;
+    }
+
+    for (const tile of tiles) {
+      if (byTileKey.has(tile.key)) continue;
+      const bounds = calculateBoundingBox(tile.geometry);
+      const existing = await prisma.roadSegment.findFirst({
+        where: { source: 'MAPBOX', spatialKey: tile.key },
+        // Oldest wins, so an id already referenced by history keeps being the
+        // one written to.
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, geometry: true },
+      });
+
+      if (!existing) {
+        const created = await prisma.roadSegment.create({
+          data: {
+            name: edge.name,
+            geometry: tile.geometry as unknown as Prisma.InputJsonValue,
+            ...bounds,
+            source: 'MAPBOX',
+            sourceId: edge.sourceId,
+            spatialKey: tile.key,
+          },
+          select: { id: true },
+        });
+        byTileKey.set(tile.key, { id: created.id, geometry: tile.geometry });
+        continue;
+      }
+
+      // A tile's stored geometry is the longest description of that stretch
+      // seen so far. A drive that clipped the corner of a cell should not
+      // shrink the row a fuller pass already established.
+      const stored = existing.geometry as unknown as GeoJSON.LineString;
+      const better = (stored?.coordinates?.length ?? 0) < tile.geometry.coordinates.length;
+      if (better) {
+        await prisma.roadSegment.update({
+          where: { id: existing.id },
+          data: {
+            name: edge.name,
+            geometry: tile.geometry as unknown as Prisma.InputJsonValue,
+            ...bounds,
+            isActive: true,
+          },
+        });
+      }
+      byTileKey.set(tile.key, { id: existing.id, geometry: better ? tile.geometry : stored });
+    }
   }
-  return result;
+
+  return { byTileKey, bySourceId, tilesBySourceId };
+}
+
+/**
+ * The segment a sample belongs to, and where along it the sample sits.
+ *
+ * Normally the tile containing the snapped position. A position exactly on a
+ * cell boundary, or in a cell the edge only grazed and so has no tile for,
+ * falls back to the nearest tile this edge produced rather than losing its
+ * match. Unnamed edges have no tiles and resolve to their own row.
+ */
+function fileOnSegment(
+  edge: MatchedEdge,
+  snapped: GeoJSON.Position,
+  segments: EdgeSegments
+): { segmentId: string; position: number } | null {
+  const legacyId = segments.bySourceId.get(edge.sourceId);
+  if (legacyId) {
+    const line = turf.lineString(edge.geometry.coordinates);
+    return { segmentId: legacyId, position: positionAlong(line, snapped) };
+  }
+
+  const key = tileKeyAt(edge.name, snapped);
+  let match = key ? segments.byTileKey.get(key) : undefined;
+  if (!match) {
+    const tiles = segments.tilesBySourceId.get(edge.sourceId) ?? [];
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const tile of tiles) {
+      const candidate = segments.byTileKey.get(tile.key);
+      if (!candidate) continue;
+      const distance = Number(turf.nearestPointOnLine(
+        turf.lineString(tile.geometry.coordinates),
+        turf.point(snapped),
+        { units: 'meters' }
+      ).properties.dist ?? Number.POSITIVE_INFINITY);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        match = candidate;
+      }
+    }
+  }
+  if (!match) return null;
+
+  return {
+    segmentId: match.id,
+    position: positionAlong(turf.lineString(match.geometry.coordinates), snapped),
+  };
+}
+
+/** Where along a line a position sits, as a fraction in [0, 1]. */
+function positionAlong(line: GeoJSON.Feature<GeoJSON.LineString>, position: GeoJSON.Position): number {
+  const length = turf.length(line, { units: 'kilometers' });
+  if (length <= 0) return 0;
+  const snapped = turf.nearestPointOnLine(line, turf.point(position), { units: 'meters' });
+  return Math.max(0, Math.min(1, Number(snapped.properties.location ?? 0) / length));
 }
 
 export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutcome> {
@@ -246,7 +343,7 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
 
   try {
     const result = await matchTrace(gpsSamples, { pauses });
-    const [edgeIds, manualSegments] = await Promise.all([
+    const [edgeSegments, manualSegments] = await Promise.all([
       upsertEdges(result.edges),
       prisma.roadSegment.findMany({
         where: { source: 'MANUAL', isActive: true },
@@ -287,24 +384,29 @@ export async function runTripAnalysis(driveId: string): Promise<TripAnalysisOutc
         [sample.longitude, sample.latitude],
         result.edges
       );
-      const automaticSegmentId = nearest ? edgeIds.get(nearest.edge.sourceId) : undefined;
-      if (nearest && automaticSegmentId && nearest.distance <= 50) {
+      if (nearest && nearest.distance <= 50) {
         const snapped = turf.nearestPointOnLine(
           turf.lineString(nearest.edge.geometry.coordinates),
           turf.point([sample.longitude, sample.latitude]),
           { units: 'meters' }
         );
-        matches.push({
-          gpsId: sample.id,
-          segmentId: automaticSegmentId,
-          distance: nearest.distance,
-          position: nearest.position,
-          snappedLatitude: snapped.geometry.coordinates[1],
-          snappedLongitude: snapped.geometry.coordinates[0],
-          confidence: pointConfidence.get(sample.id) ?? nearest.edge.confidence,
-          source: 'MAPBOX',
-        });
-        continue;
+        // The segment is the tile the snapped position lands in, so a drive is
+        // filed against the same stretches as every other drive over the same
+        // ground, whatever extent this one happened to match.
+        const filed = fileOnSegment(nearest.edge, snapped.geometry.coordinates, edgeSegments);
+        if (filed) {
+          matches.push({
+            gpsId: sample.id,
+            segmentId: filed.segmentId,
+            distance: nearest.distance,
+            position: filed.position,
+            snappedLatitude: snapped.geometry.coordinates[1],
+            snappedLongitude: snapped.geometry.coordinates[0],
+            confidence: pointConfidence.get(sample.id) ?? nearest.edge.confidence,
+            source: 'MAPBOX',
+          });
+          continue;
+        }
       }
 
       const manualFallback = findManualMatch(

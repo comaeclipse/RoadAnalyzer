@@ -1,23 +1,31 @@
 /**
- * Backfill stable segment identity.
+ * Re-tile RoadSegment onto stable identity.
  *
- * RoadSegment rows are keyed on Mapbox's OpenLR sourceId, which changes between
- * matches of the same road, so one physical stretch accumulates a row per drive.
- * lib/segment-identity.ts computes a deterministic key instead; this script
- * writes that key onto existing rows and collapses the duplicates it reveals.
+ * Rows were keyed on Mapbox's OpenLR sourceId, which changes between matches of
+ * the same road, so one physical stretch accumulated a row per drive. Identity
+ * now comes from lib/segment-identity.ts: a road cut into fixed grid tiles, one
+ * row per tile. This script builds those rows from the geometry already stored,
+ * moves every reference onto them, and removes the old rows.
+ *
+ * Each GpsSegmentMatch is re-filed by where its sample actually is -- the
+ * snapped position it was matched at, falling back to the raw fix -- so a
+ * sample lands on the tile covering the ground it was on. Congestion events
+ * follow their own first sample.
  *
  * Order matters. Deleting a RoadSegment cascades to its CongestionEvent and
- * GpsSegmentMatch rows, so everything is repointed at the canonical row before
- * anything is deleted. GpsSegmentMatch is unique on (gpsId, segmentId): a sample
- * matched to two rows of the same stretch becomes two rows with one id after
- * repointing, so the nearest match is kept and the rest dropped.
+ * GpsSegmentMatch rows, so everything is repointed before anything is deleted.
+ * GpsSegmentMatch is unique on (gpsId, segmentId): two matches for one sample
+ * can land on one tile, so the nearer is kept and the rest dropped.
  *
- * Idempotent: a second run reports nothing to do.
+ * Unnamed edges keep their old rows. There is nothing to tell two unnamed stubs
+ * in one cell apart, so merging them would invent a road.
+ *
+ * Idempotent: a second run finds every tile already present and nothing to move.
  *
  * Dry-run by default. Pass --apply to write.
  *
  *   npx tsx scripts/backfill-segment-identity.ts             # report only
- *   npx tsx scripts/backfill-segment-identity.ts --apply     # collapse them
+ *   npx tsx scripts/backfill-segment-identity.ts --apply     # re-tile
  *
  * After --apply, rebuild the aggregates, which are keyed on segmentId and are
  * not repointed:
@@ -30,7 +38,8 @@ import './load-env';
 
 import * as turf from '@turf/turf';
 import { prisma } from '../lib/prisma';
-import { spatialKeyFor } from '../lib/segment-identity';
+import { calculateBoundingBox } from '../lib/segment-matching';
+import { tileEdge, tileKeyAt, type SegmentTile } from '../lib/segment-identity';
 
 const APPLY = process.argv.includes('--apply');
 
@@ -38,7 +47,7 @@ interface SegmentRow {
   id: string;
   name: string;
   geometry: GeoJSON.LineString;
-  createdAt: Date;
+  sourceId: string | null;
 }
 
 function lengthMeters(geometry: GeoJSON.LineString): number {
@@ -46,169 +55,245 @@ function lengthMeters(geometry: GeoJSON.LineString): number {
   return turf.length(turf.lineString(geometry.coordinates), { units: 'meters' });
 }
 
-/**
- * Mean distance from each vertex of `a` to the nearest point on `b`, the same
- * measure lib/segment-dedupe.ts uses to decide two rows are the same stretch.
- * Used here only to cross-check the key: the two mechanisms should broadly
- * agree, and where they do not, one of them is wrong.
- */
-function meanVertexDistance(a: GeoJSON.LineString, b: GeoJSON.LineString): number {
-  const line = turf.lineString(b.coordinates);
-  let sum = 0;
-  for (const coordinate of a.coordinates) {
-    const snapped = turf.nearestPointOnLine(line, turf.point(coordinate), { units: 'meters' });
-    sum += Number(snapped.properties.dist ?? 0);
-  }
-  return sum / a.coordinates.length;
-}
-
-function coincident(a: GeoJSON.LineString, b: GeoJSON.LineString): boolean {
-  if (a.coordinates.length < 2 || b.coordinates.length < 2) return false;
-  return Math.min(meanVertexDistance(a, b), meanVertexDistance(b, a)) < 15;
-}
-
 async function main() {
   const segments = (await prisma.roadSegment.findMany({
     where: { source: 'MAPBOX' },
-    // spatialKey is deliberately not selected: the dry run has to be runnable
-    // before the column exists, so the numbers can be reviewed before anything
-    // is migrated.
-    select: { id: true, name: true, geometry: true, createdAt: true },
+    select: { id: true, name: true, geometry: true, sourceId: true },
     orderBy: { createdAt: 'asc' },
   })) as unknown as SegmentRow[];
 
-  console.log(`MAPBOX road segments: ${segments.length}`);
+  const nameById = new Map(segments.map((segment) => [segment.id, segment.name]));
 
-  const keyed = new Map<string, SegmentRow[]>();
-  const unkeyable: SegmentRow[] = [];
+  // Every tile the stored geometry covers, keeping the longest description of
+  // each — the same rule the write path uses.
+  const tiles = new Map<string, SegmentTile & { name: string }>();
+  const untiled: SegmentRow[] = [];
   for (const segment of segments) {
-    const key = spatialKeyFor({ name: segment.name, geometry: segment.geometry });
-    if (!key) {
-      unkeyable.push(segment);
+    const produced = tileEdge(segment);
+    if (produced.length === 0) {
+      untiled.push(segment);
       continue;
     }
-    const bucket = keyed.get(key);
-    if (bucket) bucket.push(segment);
-    else keyed.set(key, [segment]);
+    for (const tile of produced) {
+      const existing = tiles.get(tile.key);
+      if (!existing || tile.geometry.coordinates.length > existing.geometry.coordinates.length) {
+        tiles.set(tile.key, { ...tile, name: segment.name });
+      }
+    }
   }
 
-  console.log(`  distinct spatial keys: ${keyed.size}`);
-  console.log(`  rows the key declines to identify (kept as-is): ${unkeyable.length}`);
+  // A row that produced no tiles is either unnamed or a degenerate stub a few
+  // metres long. Where the same road has real tiles, the stub's samples belong
+  // on them and the row goes; where it does not, there is nowhere to move them
+  // and the row stays exactly as it is.
+  const tiledRoads = new Set(Array.from(tiles.values(), (tile) => tile.name));
+  const stranded = untiled.filter((segment) => !tiledRoads.has(segment.name));
+  const strandedIds = new Set(stranded.map((segment) => segment.id));
 
-  const clusters = Array.from(keyed.entries())
-    .filter(([, rows]) => rows.length > 1)
-    .sort((a, b) => b[1].length - a[1].length);
-  const collapsing = clusters.reduce((total, [, rows]) => total + rows.length - 1, 0);
-  console.log(`  duplicate clusters: ${clusters.length}, rows they collapse: ${collapsing}`);
-  console.log(`  segments after collapse: ${segments.length - collapsing}`);
+  console.log(`MAPBOX road segments: ${segments.length}`);
+  console.log(`  tiles they cover: ${tiles.size}`);
+  console.log(`  rows with no road to move to, left alone: ${stranded.length}`);
+  console.log(`  stubs folded into a tile of the same road: ${untiled.length - stranded.length}`);
+  console.log(`  rows to delete once repointed: ${segments.length - stranded.length}`);
 
-  // Canonical is the longest geometry: it is the row that best represents the
-  // stretch, and it is what the read-layer dedupe already picks.
-  const canonicalOf = new Map<string, SegmentRow>();
-  const repointFrom = new Map<string, string>();
-  for (const [key, rows] of keyed) {
-    const canonical = rows.reduce((best, row) =>
-      lengthMeters(row.geometry) > lengthMeters(best.geometry) ? row : best);
-    canonicalOf.set(key, canonical);
-    for (const row of rows) if (row.id !== canonical.id) repointFrom.set(row.id, canonical.id);
+  const lengths = Array.from(tiles.values(), (tile) => lengthMeters(tile.geometry)).sort((a, b) => a - b);
+  if (lengths.length) {
+    const at = (fraction: number) => Math.round(lengths[Math.floor(lengths.length * fraction)]);
+    console.log(`  tile length m: min ${Math.round(lengths[0])} median ${at(0.5)} max ${Math.round(lengths[lengths.length - 1])}`);
   }
 
-  console.log('\nLargest clusters:');
-  for (const [key, rows] of clusters.slice(0, 12)) {
-    const canonical = canonicalOf.get(key)!;
-    // A cluster whose members do not lie on top of each other is a warning that
-    // the key merged two different roads, which is the failure this dry run
-    // exists to catch.
-    const disagreeing = rows.filter((row) => row.id !== canonical.id &&
-      !coincident(row.geometry, canonical.geometry)).length;
-    console.log(`  ${rows.length} rows  ${Math.round(lengthMeters(canonical.geometry))} m  ${canonical.name}` +
-      (disagreeing ? `   *** ${disagreeing} not coincident with canonical ***` : ''));
-  }
+  const byName = new Map<string, number>();
+  for (const tile of tiles.values()) byName.set(tile.name, (byName.get(tile.name) ?? 0) + 1);
+  console.log('  roads with most tiles: ' + Array.from(byName.entries())
+    .sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => `${name} (${count})`).join(', '));
 
-  const doomed = Array.from(repointFrom.keys());
-  if (doomed.length === 0) {
-    console.log('\nNothing to collapse.');
-  }
+  const doomedIds = segments
+    .filter((segment) => !strandedIds.has(segment.id))
+    .map((segment) => segment.id);
+  const doomed = new Set(doomedIds);
 
-  // What the repointing has to move, and where it collides.
-  const events = await prisma.congestionEvent.count({ where: { segmentId: { in: doomed } } });
+  // Where each match ends up: the tile covering the position it was matched at.
   const matches = await prisma.gpsSegmentMatch.findMany({
-    where: { segmentId: { in: doomed } },
-    select: { id: true, gpsId: true, segmentId: true, distance: true },
-  });
-  const survivors = await prisma.gpsSegmentMatch.findMany({
-    where: { segmentId: { in: Array.from(new Set(repointFrom.values())) } },
-    select: { id: true, gpsId: true, segmentId: true, distance: true },
+    where: { segmentId: { in: doomedIds } },
+    select: {
+      id: true,
+      gpsId: true,
+      segmentId: true,
+      distance: true,
+      snappedLatitude: true,
+      snappedLongitude: true,
+      gps: { select: { latitude: true, longitude: true } },
+    },
   });
 
-  // Group every match that will end up on a canonical row by (gpsId, canonical),
-  // which is the unique constraint. Anything but the nearest row has to go.
+  const targetKeyByMatch = new Map<string, string>();
+  let unplaceable = 0;
+  for (const match of matches) {
+    const name = nameById.get(match.segmentId) ?? '';
+    const position: GeoJSON.Position = match.snappedLongitude != null && match.snappedLatitude != null
+      ? [match.snappedLongitude, match.snappedLatitude]
+      : [match.gps.longitude, match.gps.latitude];
+    const key = tileKeyAt(name, position);
+    // A sample just outside every tile this road produced — the road grazed the
+    // cell and got no tile there. Fall back to the nearest tile of the same road.
+    const resolved = key && tiles.has(key) ? key : nearestTileKey(name, position, tiles);
+    if (!resolved) {
+      unplaceable++;
+      continue;
+    }
+    targetKeyByMatch.set(match.id, resolved);
+  }
+
+  // Collisions: two matches for one sample landing on one tile.
   const byTarget = new Map<string, { id: string; distance: number }[]>();
-  for (const match of [...matches, ...survivors]) {
-    const target = repointFrom.get(match.segmentId) ?? match.segmentId;
-    const composite = `${match.gpsId}:${target}`;
+  for (const match of matches) {
+    const key = targetKeyByMatch.get(match.id);
+    if (!key) continue;
+    const composite = `${match.gpsId}:${key}`;
     const bucket = byTarget.get(composite);
-    const entry = { id: match.id, distance: match.distance };
-    if (bucket) bucket.push(entry);
-    else byTarget.set(composite, [entry]);
+    if (bucket) bucket.push({ id: match.id, distance: match.distance });
+    else byTarget.set(composite, [{ id: match.id, distance: match.distance }]);
   }
   const collisions = Array.from(byTarget.values()).filter((rows) => rows.length > 1);
-  const droppedMatches = collisions.reduce((total, rows) => total + rows.length - 1, 0);
+  const dropped = collisions.reduce((total, rows) => total + rows.length - 1, 0);
 
-  console.log(`\nCongestionEvent rows to repoint: ${events}`);
-  console.log(`GpsSegmentMatch rows to repoint: ${matches.length}`);
-  console.log(`GpsSegmentMatch rows dropped as duplicates: ${droppedMatches}`);
+  const events = await prisma.congestionEvent.findMany({
+    where: { segmentId: { in: doomedIds } },
+    select: { id: true, segmentId: true, startGpsId: true },
+  });
+
+  console.log(`\nGpsSegmentMatch rows to re-file: ${matches.length}`);
+  console.log(`  dropped as duplicates on one tile: ${dropped}`);
+  console.log(`  with nowhere to go: ${unplaceable}`);
+  console.log(`CongestionEvent rows to repoint: ${events.length}`);
 
   const eventsBefore = await prisma.congestionEvent.count();
-  const durationBefore = await prisma.congestionEvent.aggregate({ _sum: { duration: true } });
+  const durationBefore = (await prisma.congestionEvent.aggregate({ _sum: { duration: true } }))._sum.duration;
 
   if (!APPLY) {
     console.log('\nDry run — nothing written.');
-    console.log('Re-run with --apply to collapse:');
+    console.log('Re-run with --apply to re-tile:');
     console.log('  npx tsx scripts/backfill-segment-identity.ts --apply');
     return;
   }
 
-  // Order is load-bearing: deleting a segment cascades to its events and
-  // matches, so both are moved off the doomed rows first.
-  const keepById = new Map<string, string>();
+  // 1. The tile rows. Reuse any that already exist, so a second run is a no-op.
+  const idByKey = new Map<string, string>();
+  const alreadyThere = await prisma.roadSegment.findMany({
+    where: { source: 'MAPBOX', spatialKey: { in: Array.from(tiles.keys()) } },
+    select: { id: true, spatialKey: true },
+  });
+  for (const row of alreadyThere) if (row.spatialKey) idByKey.set(row.spatialKey, row.id);
+
+  for (const [key, tile] of tiles) {
+    if (idByKey.has(key)) continue;
+    const created = await prisma.roadSegment.create({
+      data: {
+        name: tile.name,
+        geometry: tile.geometry as unknown as object,
+        ...calculateBoundingBox(tile.geometry),
+        source: 'MAPBOX',
+        spatialKey: key,
+      },
+      select: { id: true },
+    });
+    idByKey.set(key, created.id);
+  }
+  console.log(`\nTile rows: ${idByKey.size}`);
+
+  // 2. Move every reference off the old rows, then remove them. Deletes cascade,
+  //    so this order is the difference between a migration and a data loss.
+  const keepIds = new Set<string>();
   for (const rows of collisions) {
     const nearest = rows.reduce((best, row) => (row.distance < best.distance ? row : best));
-    for (const row of rows) if (row.id !== nearest.id) keepById.set(row.id, nearest.id);
+    keepIds.add(nearest.id);
   }
-  const dropIds = Array.from(keepById.keys());
+  const dropIds = collisions.flatMap((rows) => rows.filter((row) => !keepIds.has(row.id)).map((row) => row.id));
+
+  const eventTarget = new Map<string, string>();
+  const matchTargetBySample = new Map<string, string>();
+  for (const match of matches) {
+    const key = targetKeyByMatch.get(match.id);
+    const id = key ? idByKey.get(key) : undefined;
+    if (id) matchTargetBySample.set(match.gpsId, id);
+  }
+  for (const event of events) {
+    const id = event.startGpsId ? matchTargetBySample.get(event.startGpsId) : undefined;
+    // An event whose first sample lost its match still has to go somewhere, or
+    // the cascade takes it. The longest tile of its old road is the closest
+    // thing to where it was.
+    const fallback = idByKey.get(longestTileKeyForRoad(nameById.get(event.segmentId) ?? '', tiles) ?? '');
+    const target = id ?? fallback;
+    if (target) eventTarget.set(event.id, target);
+  }
 
   await prisma.$transaction(async (tx) => {
-    if (dropIds.length) {
-      await tx.gpsSegmentMatch.deleteMany({ where: { id: { in: dropIds } } });
+    if (dropIds.length) await tx.gpsSegmentMatch.deleteMany({ where: { id: { in: dropIds } } });
+    for (const [id, segmentId] of eventTarget) {
+      await tx.congestionEvent.update({ where: { id }, data: { segmentId } });
     }
-    for (const [from, to] of repointFrom) {
-      await tx.congestionEvent.updateMany({ where: { segmentId: from }, data: { segmentId: to } });
-      await tx.gpsSegmentMatch.updateMany({ where: { segmentId: from }, data: { segmentId: to } });
+    for (const match of matches) {
+      if (dropIds.includes(match.id)) continue;
+      const key = targetKeyByMatch.get(match.id);
+      const segmentId = key ? idByKey.get(key) : undefined;
+      if (!segmentId) continue;
+      await tx.gpsSegmentMatch.update({ where: { id: match.id }, data: { segmentId } });
     }
-    // Write the key onto every row that survives, canonical or untouched.
-    for (const [key, canonical] of canonicalOf) {
-      await tx.roadSegment.update({ where: { id: canonical.id }, data: { spatialKey: key } });
-    }
-    if (doomed.length) {
-      await tx.roadSegment.deleteMany({ where: { id: { in: doomed } } });
-    }
-  }, { timeout: 120_000 });
+    await tx.roadSegment.deleteMany({ where: { id: { in: Array.from(doomed) } } });
+  }, { timeout: 300_000 });
 
   const eventsAfter = await prisma.congestionEvent.count();
-  const durationAfter = await prisma.congestionEvent.aggregate({ _sum: { duration: true } });
+  const durationAfter = (await prisma.congestionEvent.aggregate({ _sum: { duration: true } }))._sum.duration;
   const segmentsAfter = await prisma.roadSegment.count({ where: { source: 'MAPBOX' } });
-  const orphans = await prisma.gpsSegmentMatch.count({ where: { segmentId: { in: doomed } } });
 
   console.log('\nApplied.');
   console.log(`  segments: ${segments.length} -> ${segmentsAfter}`);
   console.log(`  congestion events: ${eventsBefore} -> ${eventsAfter}` +
     (eventsBefore === eventsAfter ? '  (conserved)' : '  *** NOT CONSERVED ***'));
-  console.log(`  congestion duration: ${durationBefore._sum.duration} -> ${durationAfter._sum.duration}` +
-    (durationBefore._sum.duration === durationAfter._sum.duration ? '  (conserved)' : '  *** NOT CONSERVED ***'));
-  console.log(`  matches still pointing at a deleted segment: ${orphans}`);
+  console.log(`  congestion duration: ${durationBefore} -> ${durationAfter}` +
+    (durationBefore === durationAfter ? '  (conserved)' : '  *** NOT CONSERVED ***'));
   console.log('\nNow rebuild the aggregates, which are keyed on segmentId:');
   console.log('  npm run rebuild-segment-stats -- --apply');
+}
+
+/** Nearest tile of the same road to a position, for samples no tile contains. */
+function nearestTileKey(
+  name: string,
+  position: GeoJSON.Position,
+  tiles: Map<string, SegmentTile & { name: string }>
+): string | null {
+  let best: string | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const [key, tile] of tiles) {
+    if (tile.name !== name || tile.geometry.coordinates.length < 2) continue;
+    const distance = Number(turf.nearestPointOnLine(
+      turf.lineString(tile.geometry.coordinates),
+      turf.point(position),
+      { units: 'meters' }
+    ).properties.dist ?? Number.POSITIVE_INFINITY);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = key;
+    }
+  }
+  return best;
+}
+
+function longestTileKeyForRoad(
+  name: string,
+  tiles: Map<string, SegmentTile & { name: string }>
+): string | null {
+  let best: string | null = null;
+  let bestLength = -1;
+  for (const [key, tile] of tiles) {
+    if (tile.name !== name) continue;
+    const length = lengthMeters(tile.geometry);
+    if (length > bestLength) {
+      bestLength = length;
+      best = key;
+    }
+  }
+  return best;
 }
 
 main()
